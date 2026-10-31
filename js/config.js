@@ -1,24 +1,16 @@
 // ============================================================================
-//  CONFIGURACIÓN DE FIREBASE
+//  CONFIGURACIÓN DE FIREBASE  (proyecto: finanzapp-81a62)
 // ----------------------------------------------------------------------------
-//  Pega aquí la config de tu proyecto de Firebase.
-//
-//  ¿De dónde la saco?
-//    1. Entra a https://console.firebase.google.com
-//    2. Crea un proyecto (o usa el mismo del inventario del lab).
-//    3. En el proyecto: ícono de engranaje ⚙️ → "Configuración del proyecto".
-//    4. Baja a "Tus apps" → ícono web </> → registra una app web.
-//    5. Copia el objeto `firebaseConfig` que te muestra y reemplázalo abajo.
-//
 //  Estas claves NO son secretas: van en el navegador a propósito. La seguridad
 //  de verdad la ponen las Reglas de Firestore (ver firestore.rules).
 // ============================================================================
 
 export const firebaseConfig = {
-  apiKey: 'PEGA_AQUI_TU_API_KEY',
-  authDomain: 'PEGA_AQUI.firebaseapp.com',
-  projectId: 'PEGA_AQUI_TU_PROJECT_ID',
-  storageBucket: 'PEGA_AQUI.appspot.com',
-  messagingSenderId: 'PEGA_AQUI',
-  appId: 'PEGA_AQUI',
+  apiKey: 'AIzaSyAorX9Q5HSHrz0yZYZKbfIrR8BXfWjiKDM',
+  authDomain: 'finanzapp-81a62.firebaseapp.com',
+  projectId: 'finanzapp-81a62',
+  storageBucket: 'finanzapp-81a62.firebasestorage.app',
+  messagingSenderId: '26306488637',
+  appId: '1:26306488637:web:cdd778cb52b43e01a97d54',
+  measurementId: 'G-PG8QEH8L7K',
 };
