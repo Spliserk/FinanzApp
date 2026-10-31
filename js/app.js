@@ -49,6 +49,7 @@ const state = {
   transactions: [],
   products: [],
   orders: [],
+  contracts: [],
   currentProfileId: null,
   unsub: [], // funciones para cancelar los listeners al cerrar sesión
 };
@@ -243,6 +244,13 @@ function subscribeAll() {
   );
 
   state.unsub.push(
+    onSnapshot(col('contracts'), (snap) => {
+      state.contracts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      render();
+    }),
+  );
+
+  state.unsub.push(
     onSnapshot(col('categories'), (snap) => {
       state.categories = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       render();
@@ -322,6 +330,39 @@ const ORDER_STATUS = {
   cancelled: { label: 'Cancelado', next: [] },
 };
 
+// --- Alquileres ---
+const CONTRACT_STATUS = {
+  reserved: { label: 'Apartado' },
+  picked_up: { label: 'Recogido' },
+  returned: { label: 'Devuelto' },
+  cancelled: { label: 'Cancelado' },
+};
+function isRentalProfile() {
+  return currentProfile()?.mode === 'rental';
+}
+function profileContracts() {
+  return state.contracts
+    .filter((c) => c.profileId === state.currentProfileId)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+/** Unidades "fuera" de un producto en contratos activos (apartados o recogidos). */
+function rentedOut(productId) {
+  return state.contracts
+    .filter(
+      (c) =>
+        c.profileId === state.currentProfileId &&
+        (c.status === 'reserved' || c.status === 'picked_up'),
+    )
+    .reduce(
+      (sum, c) =>
+        sum + (c.items || []).filter((it) => it.productId === productId).reduce((s, it) => s + it.qty, 0),
+      0,
+    );
+}
+function productAvailable(p) {
+  return (p.stock || 0) - rentedOut(p.id);
+}
+
 // ---------------------------------------------------------------------------
 //  Render
 // ---------------------------------------------------------------------------
@@ -331,17 +372,25 @@ function render() {
   renderCategoriesList();
   renderInventory();
   renderOrders();
+  renderRentals();
 }
 
-/** Muestra/oculta las pestañas de negocio (Inventario, Ventas). */
+/** Muestra/oculta las pestañas de negocio según el tipo y modo del perfil. */
 function updateBusinessTabs() {
-  const isBusiness = currentProfile()?.type === 'business';
+  const p = currentProfile();
+  const isBusiness = p?.type === 'business';
+  const mode = p?.mode || 'sales'; // negocios creados antes del modo = ventas
   $('#nav-inventory').classList.toggle('hidden', !isBusiness);
-  $('#nav-sales').classList.toggle('hidden', !isBusiness);
-  // Si estamos en una vista de negocio y cambiamos a un perfil personal, al tablero.
-  const inBusinessView =
-    !$('#view-inventory').classList.contains('hidden') || !$('#view-sales').classList.contains('hidden');
-  if (!isBusiness && inBusinessView) switchView('dashboard');
+  $('#nav-sales').classList.toggle('hidden', !(isBusiness && mode === 'sales'));
+  $('#nav-rentals').classList.toggle('hidden', !(isBusiness && mode === 'rental'));
+  // Si la vista activa ya no corresponde a este perfil, volvemos al tablero.
+  const allowed = new Set(['view-dashboard', 'view-transactions', 'view-settings']);
+  if (isBusiness) {
+    allowed.add('view-inventory');
+    allowed.add(mode === 'rental' ? 'view-rentals' : 'view-sales');
+  }
+  const activeView = document.querySelector('.view:not(.hidden)')?.id;
+  if (activeView && !allowed.has(activeView)) switchView('dashboard');
 }
 
 function renderInventory() {
@@ -350,8 +399,13 @@ function renderInventory() {
   if (!list) return;
   list.innerHTML = '';
   $('#inv-empty').classList.toggle('hidden', products.length > 0);
+  const rental = isRentalProfile();
   for (const p of products) {
     const low = isLowStock(p);
+    const avail = productAvailable(p);
+    const stockLine = rental
+      ? `Disponibles: <strong class="${avail <= 0 ? 'low-stock' : ''}">${avail}</strong> de ${p.stock}`
+      : `Stock: <strong class="${low ? 'low-stock' : ''}">${p.stock}</strong>${low ? ' ⚠️' : ''}`;
     const item = document.createElement('div');
     item.className = 'tx-item';
     item.innerHTML = `
@@ -360,10 +414,7 @@ function renderInventory() {
       </span>
       <div class="tx-main">
         <div class="tx-cat">${esc(p.name)}</div>
-        <div class="tx-meta">
-          Stock: <strong class="${low ? 'low-stock' : ''}">${p.stock}</strong>${low ? ' ⚠️' : ''}
-          ${p.price > 0 ? ' · ' + money(p.price) : ''}
-        </div>
+        <div class="tx-meta">${stockLine}${p.price > 0 ? ' · ' + money(p.price) : ''}</div>
       </div>
       <span class="material-symbols-rounded" style="color:var(--on-surface-variant)">chevron_right</span>`;
     item.onclick = () => openProductActions(p);
@@ -526,6 +577,7 @@ $('#modal-backdrop').addEventListener('click', (e) => {
 $('#fab').addEventListener('click', () => {
   if (!$('#view-inventory').classList.contains('hidden')) openProductForm();
   else if (!$('#view-sales').classList.contains('hidden')) openOrderForm();
+  else if (!$('#view-rentals').classList.contains('hidden')) openContractForm();
   else openTxForm();
 });
 
@@ -913,27 +965,256 @@ function openOrderDetails(o) {
 }
 
 // ---------------------------------------------------------------------------
+//  Alquileres / Contratos
+// ---------------------------------------------------------------------------
+function renderRentals() {
+  const contracts = profileContracts();
+  const list = $('#rental-list');
+  if (!list) return;
+  list.innerHTML = '';
+  $('#rental-empty').classList.toggle('hidden', contracts.length > 0);
+  for (const c of contracts) {
+    const st = CONTRACT_STATUS[c.status] || CONTRACT_STATUS.reserved;
+    const count = (c.items || []).reduce((s, it) => s + it.qty, 0);
+    const paid = c.paymentStatus === 'paid';
+    const item = document.createElement('div');
+    item.className = 'tx-item';
+    item.innerHTML = `
+      <span class="tx-icon" style="background:#8B5CF6"><span class="material-symbols-rounded">event_available</span></span>
+      <div class="tx-main">
+        <div class="tx-cat">${esc(c.customerName || 'Cliente')}</div>
+        <div class="tx-meta">${count} unidad(es) · ${esc(c.date || '')}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="tx-amount ${paid ? 'income' : ''}">${money(c.total)}</div>
+        <span class="status-chip status-${c.status}">${st.label}</span>
+        ${c.status !== 'cancelled' ? `<span class="status-chip ${paid ? 'pay-paid' : 'pay-pending'}">${paid ? 'Pagado' : 'Por cobrar'}</span>` : ''}
+      </div>`;
+    item.onclick = () => openContractDetails(c);
+    list.appendChild(item);
+  }
+}
+
+function openContractForm() {
+  if (!currentProfile()) return;
+  const products = profileProducts();
+  const node = document.createElement('div');
+  const names = [...new Set(state.contracts.map((c) => c.customerName).filter(Boolean))];
+  node.innerHTML = `
+    <label class="stacked">Cliente<input type="text" id="ct-customer" maxlength="60" list="ct-customers" placeholder="Nombre del cliente" /></label>
+    <datalist id="ct-customers">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div class="section-title" style="margin:4px">Artículos a alquilar</div>
+    <div id="ct-items"></div>
+    <button type="button" class="btn btn-text" id="ct-add-item"><span class="material-symbols-rounded">add</span>Agregar artículo</button>
+    <label class="stacked">Recargo / Descuento (opcional)<input type="number" id="ct-adjust" inputmode="numeric" step="any" placeholder="0" /></label>
+    <label class="stacked">Nota (opcional)<input type="text" id="ct-note" maxlength="120" /></label>
+    <div class="ord-total"><span>Total</span><span id="ct-total-val">$0</span></div>
+    <p id="ct-error" class="error hidden"></p>
+    <button class="btn btn-filled btn-block" id="ct-save">Crear contrato (apartar)</button>`;
+
+  const itemsWrap = node.querySelector('#ct-items');
+  const optionsHtml = products
+    .map((pr) => `<option value="${pr.id}">${esc(pr.name)} (disp ${productAvailable(pr)})</option>`)
+    .join('');
+
+  function recalc() {
+    let total = 0;
+    itemsWrap.querySelectorAll('.ord-item-row').forEach((row) => {
+      const pr = state.products.find((x) => x.id === row.querySelector('select').value);
+      const qty = parseFloat(row.querySelector('input').value) || 0;
+      if (pr) total += qty * (pr.price || 0);
+    });
+    total += parseFloat(node.querySelector('#ct-adjust').value) || 0;
+    node.querySelector('#ct-total-val').textContent = money(total);
+  }
+  function addItemRow() {
+    const row = document.createElement('div');
+    row.className = 'ord-item-row';
+    row.innerHTML = `
+      <select>${optionsHtml}</select>
+      <input type="number" inputmode="numeric" min="1" step="any" value="1" />
+      <button type="button" class="icon-btn"><span class="material-symbols-rounded">close</span></button>`;
+    row.querySelector('select').addEventListener('change', recalc);
+    row.querySelector('input').addEventListener('input', recalc);
+    row.querySelector('.icon-btn').addEventListener('click', () => {
+      row.remove();
+      recalc();
+    });
+    itemsWrap.appendChild(row);
+    recalc();
+  }
+  node.querySelector('#ct-add-item').addEventListener('click', addItemRow);
+  node.querySelector('#ct-adjust').addEventListener('input', recalc);
+  if (products.length) addItemRow();
+
+  node.querySelector('#ct-save').addEventListener('click', async () => {
+    const err = node.querySelector('#ct-error');
+    const customer = node.querySelector('#ct-customer').value.trim() || 'Cliente';
+    const adjust = parseFloat(node.querySelector('#ct-adjust').value) || 0;
+    const note = node.querySelector('#ct-note').value.trim();
+
+    const items = [];
+    for (const row of itemsWrap.querySelectorAll('.ord-item-row')) {
+      const pr = state.products.find((x) => x.id === row.querySelector('select').value);
+      const qty = parseFloat(row.querySelector('input').value) || 0;
+      if (!pr || qty <= 0) continue;
+      items.push({ productId: pr.id, name: pr.name, qty, price: pr.price || 0 });
+    }
+    if (items.length === 0) {
+      err.textContent = 'Agrega al menos un artículo.';
+      err.classList.remove('hidden');
+      return;
+    }
+    const needed = {};
+    for (const it of items) needed[it.productId] = (needed[it.productId] || 0) + it.qty;
+    for (const [pid, qty] of Object.entries(needed)) {
+      const pr = state.products.find((x) => x.id === pid);
+      if (qty > productAvailable(pr)) {
+        err.textContent = `No hay suficientes "${pr?.name}" disponibles. Disponible: ${productAvailable(pr)}.`;
+        err.classList.remove('hidden');
+        return;
+      }
+    }
+    const total = items.reduce((s, it) => s + it.qty * it.price, 0) + adjust;
+    // El alquiler NO descuenta stock (las unidades vuelven); se reserva disponibilidad.
+    // Ingreso pendiente hasta registrar el pago.
+    await addDoc(col('contracts'), {
+      profileId: state.currentProfileId, customerName: customer, items, adjust, total,
+      status: 'reserved', paymentStatus: 'pending', note, date: todayIso(),
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+    closeModal();
+  });
+
+  openModal('Nuevo contrato', node);
+}
+
+function openContractDetails(c) {
+  const st = CONTRACT_STATUS[c.status] || CONTRACT_STATUS.reserved;
+  const paid = c.paymentStatus === 'paid';
+  const node = document.createElement('div');
+  const itemsHtml = (c.items || [])
+    .map(
+      (it) => `<div class="settings-row"><div><span class="name">${esc(it.name)}</span>
+      <div class="sub">${it.qty} × ${money(it.price)}</div></div><strong>${money(it.qty * it.price)}</strong></div>`,
+    )
+    .join('');
+  let lifeBtns = '';
+  if (c.status === 'reserved')
+    lifeBtns += `<button class="btn btn-tonal btn-block" id="ct-pickup"><span class="material-symbols-rounded">local_shipping</span>Marcar recogido</button>`;
+  if (c.status === 'picked_up')
+    lifeBtns += `<button class="btn btn-tonal btn-block" id="ct-return"><span class="material-symbols-rounded">assignment_return</span>Marcar devuelto</button>`;
+  const payBtn =
+    !paid && c.status !== 'cancelled'
+      ? `<button class="btn btn-filled btn-block" id="ct-pay"><span class="material-symbols-rounded">payments</span>Registrar pago (${money(c.total)})</button>`
+      : '';
+  const canCancel = c.status === 'reserved' || c.status === 'picked_up';
+  node.innerHTML = `
+    <div class="settings-row">
+      <div><span class="name">${esc(c.customerName || 'Cliente')}</span><div class="sub">${esc(c.date || '')}</div></div>
+      <div style="text-align:right"><span class="status-chip status-${c.status}">${st.label}</span>
+      ${c.status !== 'cancelled' ? `<br><span class="status-chip ${paid ? 'pay-paid' : 'pay-pending'}" style="margin-top:4px;display:inline-block">${paid ? 'Pagado' : 'Por cobrar'}</span>` : ''}</div>
+    </div>
+    ${itemsHtml}
+    <div class="ord-total"><span>Total</span><span>${money(c.total)}</span></div>
+    ${c.note ? `<p class="muted">${esc(c.note)}</p>` : ''}
+    ${payBtn}
+    ${lifeBtns}
+    ${canCancel ? `<button class="btn btn-danger btn-block" id="ct-cancel"><span class="material-symbols-rounded">cancel</span>Cancelar contrato</button>` : ''}`;
+
+  const pickup = node.querySelector('#ct-pickup');
+  if (pickup)
+    pickup.addEventListener('click', async () => {
+      await updateDoc(doc(col('contracts'), c.id), { status: 'picked_up', updatedAt: serverTimestamp() });
+      closeModal();
+    });
+  const ret = node.querySelector('#ct-return');
+  if (ret)
+    ret.addEventListener('click', async () => {
+      await updateDoc(doc(col('contracts'), c.id), {
+        status: 'returned', returnedAt: todayIso(), updatedAt: serverTimestamp(),
+      });
+      closeModal();
+    });
+  const pay = node.querySelector('#ct-pay');
+  if (pay)
+    pay.addEventListener('click', async () => {
+      let cat =
+        state.categories.find((x) => x.profileType === 'business' && x.name === 'Servicios') ||
+        state.categories.find((x) => x.profileType === 'business' && x.type === 'income');
+      if (!cat) {
+        const ref = await addDoc(col('categories'), {
+          name: 'Servicios', type: 'income', profileType: 'business', color: '#10B981', createdAt: serverTimestamp(),
+        });
+        cat = { id: ref.id };
+      }
+      const batch = writeBatch(db);
+      const txRef = doc(col('transactions'));
+      batch.set(txRef, {
+        profileId: state.currentProfileId, type: 'income', amount: c.total, categoryId: cat.id,
+        date: todayIso(), note: `Alquiler - ${c.customerName}`, createdAt: serverTimestamp(),
+      });
+      batch.update(doc(col('contracts'), c.id), {
+        paymentStatus: 'paid', incomeTxId: txRef.id, updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      closeModal();
+    });
+  const cancelBtn = node.querySelector('#ct-cancel');
+  if (cancelBtn)
+    cancelBtn.addEventListener('click', async () => {
+      if (!confirm('¿Cancelar el contrato? Se liberan las unidades' + (paid ? ' y se revierte el pago.' : '.'))) return;
+      const batch = writeBatch(db);
+      if (paid && c.incomeTxId) batch.delete(doc(col('transactions'), c.incomeTxId));
+      batch.update(doc(col('contracts'), c.id), { status: 'cancelled', updatedAt: serverTimestamp() });
+      await batch.commit();
+      closeModal();
+    });
+
+  openModal('Contrato', node);
+}
+
+// ---------------------------------------------------------------------------
 //  Perfiles y categorías (Ajustes)
 // ---------------------------------------------------------------------------
 $('#add-profile-btn').addEventListener('click', () => {
   let type = 'personal';
   const node = document.createElement('div');
+  let mode = 'sales';
   node.innerHTML = `
     <label class="stacked">Nombre<input type="text" id="p-name" maxlength="40" placeholder="Mi negocio" /></label>
-    <div class="segmented">
+    <div class="segmented" id="p-type">
       <button type="button" data-t="personal" class="active-neutral">Personal</button>
       <button type="button" data-t="business">Negocio</button>
     </div>
+    <div id="p-mode-wrap" class="hidden">
+      <div class="section-title" style="margin:8px 4px 6px">Tipo de negocio</div>
+      <div class="segmented" id="p-mode">
+        <button type="button" data-m="sales" class="active-neutral">Ventas</button>
+        <button type="button" data-m="rental">Alquiler</button>
+      </div>
+    </div>
     <p id="p-error" class="error hidden"></p>
     <button class="btn btn-filled btn-block" id="p-save">Crear perfil</button>`;
-  const btns = node.querySelectorAll('.segmented button');
-  btns.forEach((b) =>
+
+  const typeBtns = node.querySelectorAll('#p-type button');
+  typeBtns.forEach((b) =>
     b.addEventListener('click', () => {
       type = b.dataset.t;
-      btns.forEach((x) => x.classList.remove('active-neutral'));
+      typeBtns.forEach((x) => x.classList.remove('active-neutral'));
+      b.classList.add('active-neutral');
+      node.querySelector('#p-mode-wrap').classList.toggle('hidden', type !== 'business');
+    }),
+  );
+  const modeBtns = node.querySelectorAll('#p-mode button');
+  modeBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      mode = b.dataset.m;
+      modeBtns.forEach((x) => x.classList.remove('active-neutral'));
       b.classList.add('active-neutral');
     }),
   );
+
   node.querySelector('#p-save').addEventListener('click', async () => {
     const name = node.querySelector('#p-name').value.trim();
     const err = node.querySelector('#p-error');
@@ -942,7 +1223,9 @@ $('#add-profile-btn').addEventListener('click', () => {
       err.classList.remove('hidden');
       return;
     }
-    await addDoc(col('profiles'), { name, type, createdAt: serverTimestamp() });
+    const data = { name, type, createdAt: serverTimestamp() };
+    if (type === 'business') data.mode = mode;
+    await addDoc(col('profiles'), data);
     closeModal();
   });
   openModal('Nuevo perfil', node);

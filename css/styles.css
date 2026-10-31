@@ -190,6 +190,13 @@ input[type='color'] { height: 48px; padding: 4px; }
 .status-shipped { background: #ede7f6; color: #5e35b1; }
 .status-delivered { background: #e8f5e9; color: #2e7d32; }
 .status-cancelled { background: #ffebee; color: #c62828; }
+/* Estados de contrato de alquiler */
+.status-reserved { background: #fff3e0; color: #e65100; }
+.status-picked_up { background: #e3f2fd; color: #1565c0; }
+.status-returned { background: #e8f5e9; color: #2e7d32; }
+/* Chips de pago */
+.pay-paid { background: #e8f5e9; color: #2e7d32; }
+.pay-pending { background: #fff3e0; color: #e65100; }
 
 /* Filas de artículos en el formulario de pedido */
 .ord-item-row { display: flex; gap: 8px; align-items: center; }

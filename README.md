@@ -43,12 +43,15 @@ Luego abre <http://localhost:8080>.
 - Categorías por defecto y personalizables.
 - **Inventario** (solo perfiles de Negocio): productos y materiales con stock,
   precio y stock mínimo; reabastecer (con gasto automático opcional), editar y eliminar.
-- **Ventas / Pedidos** (solo Negocio): pedidos con varios artículos que descuentan
-  stock y registran el ingreso; estados pendiente → en proceso → enviado → entregado;
-  cancelar restaura stock y revierte el ingreso.
+- **Ventas / Pedidos** (negocio modo Ventas): pedidos con varios artículos que
+  descuentan stock y registran el ingreso; estados pendiente → en proceso → enviado →
+  entregado; cancelar restaura stock y revierte el ingreso.
+- **Alquileres / Contratos** (negocio modo Alquiler): apartar → recoger → devolver,
+  con pago por cobrar/pagado; las unidades reducen la disponibilidad (no el stock) y
+  vuelven al devolver; el ingreso se registra al aprobar el pago.
+- El perfil de negocio tiene **modo** (Ventas o Alquiler) que define sus pestañas.
 - Diseño **Material Design 3** (Roboto, Material Symbols, ripple, bottom sheets).
 - Sincronización en tiempo real + offline (indicador de nube arriba a la derecha).
 
 ## Pendiente (siguientes iteraciones)
-Contratos de alquiler, recibos PDF y analíticas —
-se irán sumando sobre esta base que ya sincroniza.
+Recibos PDF y analíticas — se irán sumando sobre esta base que ya sincroniza.
