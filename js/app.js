@@ -48,6 +48,7 @@ const state = {
   categories: [],
   transactions: [],
   products: [],
+  orders: [],
   currentProfileId: null,
   unsub: [], // funciones para cancelar los listeners al cerrar sesión
 };
@@ -222,7 +223,7 @@ function subscribeAll() {
           (saved && state.profiles.find((p) => p.id === saved)?.id) || state.profiles[0]?.id || null;
       }
       renderProfiles();
-      updateInventoryTab();
+      updateBusinessTabs();
       render();
     }),
   );
@@ -230,6 +231,13 @@ function subscribeAll() {
   state.unsub.push(
     onSnapshot(col('products'), (snap) => {
       state.products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      render();
+    }),
+  );
+
+  state.unsub.push(
+    onSnapshot(col('orders'), (snap) => {
+      state.orders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       render();
     }),
   );
@@ -299,6 +307,20 @@ function profileProducts() {
 function isLowStock(p) {
   return p.minStock > 0 && p.stock <= p.minStock;
 }
+function profileOrders() {
+  return state.orders
+    .filter((o) => o.profileId === state.currentProfileId)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+// Estados de pedido y transiciones permitidas (no se retrocede).
+const ORDER_STATUS = {
+  pending: { label: 'Pendiente', next: ['processing', 'shipped', 'delivered'] },
+  processing: { label: 'En proceso', next: ['shipped', 'delivered'] },
+  shipped: { label: 'Enviado', next: ['delivered'] },
+  delivered: { label: 'Entregado', next: [] },
+  cancelled: { label: 'Cancelado', next: [] },
+};
 
 // ---------------------------------------------------------------------------
 //  Render
@@ -308,16 +330,18 @@ function render() {
   renderTransactions();
   renderCategoriesList();
   renderInventory();
+  renderOrders();
 }
 
-/** Muestra/oculta la pestaña Inventario según si el perfil es de negocio. */
-function updateInventoryTab() {
+/** Muestra/oculta las pestañas de negocio (Inventario, Ventas). */
+function updateBusinessTabs() {
   const isBusiness = currentProfile()?.type === 'business';
   $('#nav-inventory').classList.toggle('hidden', !isBusiness);
-  // Si estamos en Inventario y cambiamos a un perfil personal, volvemos al tablero.
-  if (!isBusiness && !$('#view-inventory').classList.contains('hidden')) {
-    switchView('dashboard');
-  }
+  $('#nav-sales').classList.toggle('hidden', !isBusiness);
+  // Si estamos en una vista de negocio y cambiamos a un perfil personal, al tablero.
+  const inBusinessView =
+    !$('#view-inventory').classList.contains('hidden') || !$('#view-sales').classList.contains('hidden');
+  if (!isBusiness && inBusinessView) switchView('dashboard');
 }
 
 function renderInventory() {
@@ -474,7 +498,7 @@ document.querySelectorAll('.nav-item').forEach((tab) => {
 $('#profile-select').addEventListener('change', (e) => {
   state.currentProfileId = e.target.value;
   localStorage.setItem('finanzapp.profile', state.currentProfileId);
-  updateInventoryTab();
+  updateBusinessTabs();
   render();
 });
 
@@ -501,6 +525,7 @@ $('#modal-backdrop').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 $('#fab').addEventListener('click', () => {
   if (!$('#view-inventory').classList.contains('hidden')) openProductForm();
+  else if (!$('#view-sales').classList.contains('hidden')) openOrderForm();
   else openTxForm();
 });
 
@@ -688,6 +713,203 @@ function openProductActions(p) {
     closeModal();
   });
   openModal('Producto', node);
+}
+
+// ---------------------------------------------------------------------------
+//  Ventas / Pedidos
+// ---------------------------------------------------------------------------
+function renderOrders() {
+  const orders = profileOrders();
+  const list = $('#order-list');
+  if (!list) return;
+  list.innerHTML = '';
+  $('#order-empty').classList.toggle('hidden', orders.length > 0);
+  for (const o of orders) {
+    const st = ORDER_STATUS[o.status] || ORDER_STATUS.pending;
+    const count = (o.items || []).reduce((s, it) => s + it.qty, 0);
+    const item = document.createElement('div');
+    item.className = 'tx-item';
+    item.innerHTML = `
+      <span class="tx-icon" style="background:#1b61d1"><span class="material-symbols-rounded">shopping_cart</span></span>
+      <div class="tx-main">
+        <div class="tx-cat">${esc(o.customerName || 'Cliente')}</div>
+        <div class="tx-meta">${count} artículo(s) · ${esc(o.date || '')}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="tx-amount income">${money(o.total)}</div>
+        <span class="status-chip status-${o.status}">${st.label}</span>
+      </div>`;
+    item.onclick = () => openOrderDetails(o);
+    list.appendChild(item);
+  }
+}
+
+function openOrderForm() {
+  if (!currentProfile()) return;
+  const sellable = profileProducts();
+  const node = document.createElement('div');
+  const names = [...new Set(state.orders.map((o) => o.customerName).filter(Boolean))];
+  node.innerHTML = `
+    <label class="stacked">Cliente<input type="text" id="ord-customer" maxlength="60" list="ord-customers" placeholder="Nombre del cliente" /></label>
+    <datalist id="ord-customers">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div class="section-title" style="margin:4px">Artículos</div>
+    <div id="ord-items"></div>
+    <button type="button" class="btn btn-text" id="ord-add-item"><span class="material-symbols-rounded">add</span>Agregar artículo</button>
+    <label class="stacked">Envío (opcional)<input type="number" id="ord-shipping" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
+    <label class="stacked">Nota (opcional)<input type="text" id="ord-note" maxlength="120" /></label>
+    <div class="ord-total"><span>Total</span><span id="ord-total-val">$0</span></div>
+    <p id="ord-error" class="error hidden"></p>
+    <button class="btn btn-filled btn-block" id="ord-save">Crear pedido</button>`;
+
+  const itemsWrap = node.querySelector('#ord-items');
+  const optionsHtml = sellable
+    .map((pr) => `<option value="${pr.id}">${esc(pr.name)} (stock ${pr.stock})</option>`)
+    .join('');
+
+  function recalc() {
+    let total = 0;
+    itemsWrap.querySelectorAll('.ord-item-row').forEach((row) => {
+      const pr = state.products.find((x) => x.id === row.querySelector('select').value);
+      const qty = parseFloat(row.querySelector('input').value) || 0;
+      if (pr) total += qty * (pr.price || 0);
+    });
+    total += parseFloat(node.querySelector('#ord-shipping').value) || 0;
+    node.querySelector('#ord-total-val').textContent = money(total);
+  }
+  function addItemRow() {
+    const row = document.createElement('div');
+    row.className = 'ord-item-row';
+    row.innerHTML = `
+      <select>${optionsHtml}</select>
+      <input type="number" inputmode="numeric" min="1" step="any" value="1" />
+      <button type="button" class="icon-btn"><span class="material-symbols-rounded">close</span></button>`;
+    row.querySelector('select').addEventListener('change', recalc);
+    row.querySelector('input').addEventListener('input', recalc);
+    row.querySelector('.icon-btn').addEventListener('click', () => {
+      row.remove();
+      recalc();
+    });
+    itemsWrap.appendChild(row);
+    recalc();
+  }
+  node.querySelector('#ord-add-item').addEventListener('click', addItemRow);
+  node.querySelector('#ord-shipping').addEventListener('input', recalc);
+  if (sellable.length) addItemRow();
+
+  node.querySelector('#ord-save').addEventListener('click', async () => {
+    const err = node.querySelector('#ord-error');
+    const customer = node.querySelector('#ord-customer').value.trim() || 'Cliente';
+    const shipping = parseFloat(node.querySelector('#ord-shipping').value) || 0;
+    const note = node.querySelector('#ord-note').value.trim();
+
+    const items = [];
+    for (const row of itemsWrap.querySelectorAll('.ord-item-row')) {
+      const pr = state.products.find((x) => x.id === row.querySelector('select').value);
+      const qty = parseFloat(row.querySelector('input').value) || 0;
+      if (!pr || qty <= 0) continue;
+      items.push({ productId: pr.id, name: pr.name, qty, price: pr.price || 0 });
+    }
+    if (items.length === 0) {
+      err.textContent = 'Agrega al menos un artículo.';
+      err.classList.remove('hidden');
+      return;
+    }
+    const needed = {};
+    for (const it of items) needed[it.productId] = (needed[it.productId] || 0) + it.qty;
+    for (const [pid, qty] of Object.entries(needed)) {
+      const pr = state.products.find((x) => x.id === pid);
+      if (qty > (pr?.stock || 0)) {
+        err.textContent = `No hay stock suficiente de ${pr?.name}. Disponible: ${pr?.stock || 0}.`;
+        err.classList.remove('hidden');
+        return;
+      }
+    }
+    const total = items.reduce((s, it) => s + it.qty * it.price, 0) + shipping;
+
+    let ventasCat =
+      state.categories.find((c) => c.profileType === 'business' && c.name === 'Ventas') ||
+      state.categories.find((c) => c.profileType === 'business' && c.type === 'income');
+    if (!ventasCat) {
+      const ref = await addDoc(col('categories'), {
+        name: 'Ventas', type: 'income', profileType: 'business', color: '#059669', createdAt: serverTimestamp(),
+      });
+      ventasCat = { id: ref.id };
+    }
+
+    // Escritura atómica: ingreso + pedido + descuento de stock.
+    const batch = writeBatch(db);
+    const txRef = doc(col('transactions'));
+    const orderRef = doc(col('orders'));
+    batch.set(txRef, {
+      profileId: state.currentProfileId, type: 'income', amount: total, categoryId: ventasCat.id,
+      date: todayIso(), note: `Pedido - ${customer}`, createdAt: serverTimestamp(),
+    });
+    batch.set(orderRef, {
+      profileId: state.currentProfileId, customerName: customer, items, shipping, total,
+      status: 'pending', incomeTxId: txRef.id, note, date: todayIso(),
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+    for (const [pid, qty] of Object.entries(needed)) {
+      const pr = state.products.find((x) => x.id === pid);
+      batch.update(doc(col('products'), pid), { stock: (pr.stock || 0) - qty, updatedAt: serverTimestamp() });
+    }
+    await batch.commit();
+    closeModal();
+  });
+
+  openModal('Nuevo pedido', node);
+}
+
+function openOrderDetails(o) {
+  const st = ORDER_STATUS[o.status] || ORDER_STATUS.pending;
+  const node = document.createElement('div');
+  const itemsHtml = (o.items || [])
+    .map(
+      (it) => `<div class="settings-row"><div><span class="name">${esc(it.name)}</span>
+      <div class="sub">${it.qty} × ${money(it.price)}</div></div><strong>${money(it.qty * it.price)}</strong></div>`,
+    )
+    .join('');
+  const nextBtns = st.next
+    .map((s) => `<button class="btn btn-tonal btn-block ord-next" data-s="${s}">Marcar como ${ORDER_STATUS[s].label}</button>`)
+    .join('');
+  const canCancel = o.status !== 'cancelled' && o.status !== 'delivered';
+  node.innerHTML = `
+    <div class="settings-row">
+      <div><span class="name">${esc(o.customerName || 'Cliente')}</span>
+      <div class="sub">${esc(o.date || '')}</div></div>
+      <span class="status-chip status-${o.status}">${st.label}</span>
+    </div>
+    ${itemsHtml}
+    ${o.shipping > 0 ? `<div class="settings-row"><span class="muted">Envío</span><strong>${money(o.shipping)}</strong></div>` : ''}
+    <div class="ord-total"><span>Total</span><span>${money(o.total)}</span></div>
+    ${o.note ? `<p class="muted">${esc(o.note)}</p>` : ''}
+    ${nextBtns}
+    ${canCancel ? `<button class="btn btn-danger btn-block" id="ord-cancel"><span class="material-symbols-rounded">cancel</span>Cancelar pedido</button>` : ''}`;
+
+  node.querySelectorAll('.ord-next').forEach((b) =>
+    b.addEventListener('click', async () => {
+      await updateDoc(doc(col('orders'), o.id), { status: b.dataset.s, updatedAt: serverTimestamp() });
+      closeModal();
+    }),
+  );
+  const cancelBtn = node.querySelector('#ord-cancel');
+  if (cancelBtn)
+    cancelBtn.addEventListener('click', async () => {
+      if (!confirm('¿Cancelar el pedido? Se restaurará el stock y se revertirá el ingreso.')) return;
+      const batch = writeBatch(db);
+      const restore = {};
+      for (const it of o.items || []) restore[it.productId] = (restore[it.productId] || 0) + it.qty;
+      for (const [pid, qty] of Object.entries(restore)) {
+        const pr = state.products.find((x) => x.id === pid);
+        if (pr) batch.update(doc(col('products'), pid), { stock: (pr.stock || 0) + qty, updatedAt: serverTimestamp() });
+      }
+      if (o.incomeTxId) batch.delete(doc(col('transactions'), o.incomeTxId));
+      batch.update(doc(col('orders'), o.id), { status: 'cancelled', updatedAt: serverTimestamp() });
+      await batch.commit();
+      closeModal();
+    });
+
+  openModal('Pedido', node);
 }
 
 // ---------------------------------------------------------------------------

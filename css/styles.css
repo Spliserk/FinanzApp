@@ -183,6 +183,21 @@ input[type='color'] { height: 48px; padding: 4px; }
 .settings-row .sub { font-size: 0.8rem; color: var(--on-surface-variant); }
 .chip { font-size: 0.72rem; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: var(--secondary-container); color: var(--on-secondary-container); margin-left: 8px; }
 
+/* Chips de estado de pedido */
+.status-chip { font-size: 0.72rem; font-weight: 500; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.status-pending { background: #fff3e0; color: #e65100; }
+.status-processing { background: #e3f2fd; color: #1565c0; }
+.status-shipped { background: #ede7f6; color: #5e35b1; }
+.status-delivered { background: #e8f5e9; color: #2e7d32; }
+.status-cancelled { background: #ffebee; color: #c62828; }
+
+/* Filas de artículos en el formulario de pedido */
+.ord-item-row { display: flex; gap: 8px; align-items: center; }
+.ord-item-row select { flex: 2; min-width: 0; }
+.ord-item-row input { flex: 1; min-width: 0; }
+.ord-item-row .icon-btn { flex-shrink: 0; }
+.ord-total { display: flex; justify-content: space-between; align-items: center; font-weight: 500; font-size: 1.15rem; padding: 4px 0; border-top: 1px solid var(--outline-variant); margin-top: 4px; padding-top: 12px; }
+
 /* ---------- FAB (M3: cuadrado redondeado) ---------- */
 .fab {
   position: fixed; right: 20px; bottom: calc(96px + var(--safe-bottom)); z-index: 20;
@@ -200,10 +215,10 @@ input[type='color'] { height: 48px; padding: 4px; }
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 15; background: var(--surface-container);
   display: flex; padding-bottom: var(--safe-bottom); max-width: 640px; margin: 0 auto; height: calc(80px + var(--safe-bottom));
 }
-.nav-item { flex: 1; background: none; border: none; padding: 12px 0 16px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; font-family: inherit; }
-.nav-indicator { display: flex; align-items: center; justify-content: center; width: 64px; height: 32px; border-radius: 16px; transition: background 0.2s; }
+.nav-item { flex: 1; min-width: 0; background: none; border: none; padding: 12px 0 16px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; font-family: inherit; }
+.nav-indicator { display: flex; align-items: center; justify-content: center; width: 56px; height: 32px; border-radius: 16px; transition: background 0.2s; }
 .nav-item .material-symbols-rounded { font-size: 24px; color: var(--on-surface-variant); transition: color 0.2s; }
-.nav-label { font-size: 0.75rem; font-weight: 500; color: var(--on-surface-variant); }
+.nav-label { font-size: 0.68rem; font-weight: 500; color: var(--on-surface-variant); white-space: nowrap; }
 .nav-item.active .nav-indicator { background: var(--secondary-container); }
 .nav-item.active .material-symbols-rounded { color: var(--on-secondary-container); font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24; }
 .nav-item.active .nav-label { color: var(--on-surface); }

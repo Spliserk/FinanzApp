@@ -94,6 +94,15 @@
         </div>
       </section>
 
+      <!-- Vista: Ventas / Pedidos (solo negocios) -->
+      <section id="view-sales" class="view hidden">
+        <div id="order-list" class="tx-list"></div>
+        <div id="order-empty" class="empty hidden">
+          <span class="material-symbols-rounded">shopping_cart</span>
+          <p>No hay pedidos todavía.<br />Toca ＋ para crear uno.</p>
+        </div>
+      </section>
+
       <!-- Vista: Ajustes -->
       <section id="view-settings" class="view hidden">
         <h2 class="section-title">Perfiles</h2>
@@ -137,6 +146,10 @@
         <button class="nav-item hidden" data-view="inventory" id="nav-inventory">
           <span class="nav-indicator"><span class="material-symbols-rounded">inventory_2</span></span>
           <span class="nav-label">Inventario</span>
+        </button>
+        <button class="nav-item hidden" data-view="sales" id="nav-sales">
+          <span class="nav-indicator"><span class="material-symbols-rounded">point_of_sale</span></span>
+          <span class="nav-label">Ventas</span>
         </button>
         <button class="nav-item" data-view="settings">
           <span class="nav-indicator"><span class="material-symbols-rounded">settings</span></span>
