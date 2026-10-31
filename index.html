@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#2563EB" />
+    <title>FinanzApp</title>
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <!-- Pantalla de carga -->
+    <div id="splash" class="splash">
+      <div class="spinner"></div>
+    </div>
+
+    <!-- Pantalla de login -->
+    <section id="auth" class="auth hidden">
+      <div class="auth-card">
+        <h1 class="brand">FinanzApp</h1>
+        <p class="auth-sub">Controla tus finanzas, sincronizado en todos tus dispositivos.</p>
+        <form id="auth-form">
+          <label>Correo
+            <input type="email" id="auth-email" autocomplete="email" required />
+          </label>
+          <label>Contraseña
+            <input type="password" id="auth-password" autocomplete="current-password" minlength="6" required />
+          </label>
+          <p id="auth-error" class="error hidden"></p>
+          <button type="submit" id="auth-submit" class="btn btn-primary btn-block">Entrar</button>
+        </form>
+        <button id="auth-toggle" class="link">¿No tienes cuenta? Regístrate</button>
+      </div>
+    </section>
+
+    <!-- App principal -->
+    <main id="app" class="app hidden">
+      <header class="topbar">
+        <div class="topbar-left">
+          <select id="profile-select" class="profile-select" aria-label="Perfil"></select>
+        </div>
+        <div id="sync-badge" class="sync-badge" title="Estado de sincronización">●</div>
+      </header>
+
+      <!-- Vista: Tablero -->
+      <section id="view-dashboard" class="view">
+        <div class="balance-card">
+          <span class="balance-label">Saldo del perfil</span>
+          <span id="balance-amount" class="balance-amount">$0</span>
+        </div>
+        <div class="stat-row">
+          <div class="stat stat-income">
+            <span class="stat-label">Ingresos (mes)</span>
+            <span id="month-income" class="stat-value">$0</span>
+          </div>
+          <div class="stat stat-expense">
+            <span class="stat-label">Gastos (mes)</span>
+            <span id="month-expense" class="stat-value">$0</span>
+          </div>
+        </div>
+        <h2 class="section-title">Por categoría (mes)</h2>
+        <div id="category-breakdown" class="category-breakdown"></div>
+      </section>
+
+      <!-- Vista: Movimientos -->
+      <section id="view-transactions" class="view hidden">
+        <div id="tx-list" class="tx-list"></div>
+        <div id="tx-empty" class="empty hidden">Aún no hay movimientos. Toca ＋ para agregar uno.</div>
+      </section>
+
+      <!-- Vista: Ajustes -->
+      <section id="view-settings" class="view hidden">
+        <h2 class="section-title">Perfiles</h2>
+        <div id="profiles-list" class="settings-list"></div>
+        <button id="add-profile-btn" class="btn btn-secondary btn-block">＋ Nuevo perfil</button>
+
+        <h2 class="section-title">Categorías del perfil</h2>
+        <div id="categories-list" class="settings-list"></div>
+        <button id="add-category-btn" class="btn btn-secondary btn-block">＋ Nueva categoría</button>
+
+        <h2 class="section-title">Cuenta</h2>
+        <div class="settings-list">
+          <div class="settings-row">
+            <span id="account-email" class="muted"></span>
+          </div>
+        </div>
+        <button id="signout-btn" class="btn btn-danger btn-block">Cerrar sesión</button>
+      </section>
+
+      <!-- Botón flotante agregar -->
+      <button id="fab" class="fab" aria-label="Agregar movimiento">＋</button>
+
+      <!-- Navegación inferior -->
+      <nav class="tabbar">
+        <button class="tab active" data-view="dashboard"><span>Tablero</span></button>
+        <button class="tab" data-view="transactions"><span>Movimientos</span></button>
+        <button class="tab" data-view="settings"><span>Ajustes</span></button>
+      </nav>
+    </main>
+
+    <!-- Modal genérico -->
+    <div id="modal-backdrop" class="modal-backdrop hidden">
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h3 id="modal-title">Título</h3>
+          <button id="modal-close" class="icon-btn" aria-label="Cerrar">✕</button>
+        </div>
+        <div id="modal-body" class="modal-body"></div>
+      </div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
