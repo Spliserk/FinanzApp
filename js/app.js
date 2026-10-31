@@ -19,6 +19,7 @@ import {
   collection,
   doc,
   addDoc,
+  updateDoc,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
@@ -46,6 +47,7 @@ const state = {
   profiles: [],
   categories: [],
   transactions: [],
+  products: [],
   currentProfileId: null,
   unsub: [], // funciones para cancelar los listeners al cerrar sesión
 };
@@ -220,6 +222,14 @@ function subscribeAll() {
           (saved && state.profiles.find((p) => p.id === saved)?.id) || state.profiles[0]?.id || null;
       }
       renderProfiles();
+      updateInventoryTab();
+      render();
+    }),
+  );
+
+  state.unsub.push(
+    onSnapshot(col('products'), (snap) => {
+      state.products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       render();
     }),
   );
@@ -234,8 +244,8 @@ function subscribeAll() {
   state.unsub.push(
     onSnapshot(col('transactions'), (snap) => {
       state.transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      // Indicador de sincronización: si el snapshot viene de caché, aún no subió.
-      setSyncBadge(snap.metadata.fromCache ? 'syncing' : 'ok');
+      // Indicador de sincronización: hay cambios locales sin confirmar aún.
+      setSyncBadge(snap.metadata.hasPendingWrites ? 'syncing' : 'ok');
       render();
     }),
   );
@@ -281,6 +291,14 @@ function profileCategories() {
 function categoryById(id) {
   return state.categories.find((c) => c.id === id) || null;
 }
+function profileProducts() {
+  return state.products
+    .filter((p) => p.profileId === state.currentProfileId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+function isLowStock(p) {
+  return p.minStock > 0 && p.stock <= p.minStock;
+}
 
 // ---------------------------------------------------------------------------
 //  Render
@@ -289,6 +307,44 @@ function render() {
   renderDashboard();
   renderTransactions();
   renderCategoriesList();
+  renderInventory();
+}
+
+/** Muestra/oculta la pestaña Inventario según si el perfil es de negocio. */
+function updateInventoryTab() {
+  const isBusiness = currentProfile()?.type === 'business';
+  $('#nav-inventory').classList.toggle('hidden', !isBusiness);
+  // Si estamos en Inventario y cambiamos a un perfil personal, volvemos al tablero.
+  if (!isBusiness && !$('#view-inventory').classList.contains('hidden')) {
+    switchView('dashboard');
+  }
+}
+
+function renderInventory() {
+  const products = profileProducts();
+  const list = $('#inv-list');
+  if (!list) return;
+  list.innerHTML = '';
+  $('#inv-empty').classList.toggle('hidden', products.length > 0);
+  for (const p of products) {
+    const low = isLowStock(p);
+    const item = document.createElement('div');
+    item.className = 'tx-item';
+    item.innerHTML = `
+      <span class="tx-icon" style="background:${p.kind === 'material' ? '#8B5CF6' : '#1b61d1'}">
+        <span class="material-symbols-rounded">${p.kind === 'material' ? 'category' : 'inventory_2'}</span>
+      </span>
+      <div class="tx-main">
+        <div class="tx-cat">${esc(p.name)}</div>
+        <div class="tx-meta">
+          Stock: <strong class="${low ? 'low-stock' : ''}">${p.stock}</strong>${low ? ' ⚠️' : ''}
+          ${p.price > 0 ? ' · ' + money(p.price) : ''}
+        </div>
+      </div>
+      <span class="material-symbols-rounded" style="color:var(--on-surface-variant)">chevron_right</span>`;
+    item.onclick = () => openProductActions(p);
+    list.appendChild(item);
+  }
 }
 
 function renderProfiles() {
@@ -405,20 +461,20 @@ function esc(s) {
 // ---------------------------------------------------------------------------
 //  Navegación (tabs)
 // ---------------------------------------------------------------------------
+function switchView(view) {
+  document.querySelectorAll('.nav-item').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
+  document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+  $(`#view-${view}`).classList.remove('hidden');
+  $('#fab').classList.toggle('hidden', view === 'settings');
+}
 document.querySelectorAll('.nav-item').forEach((tab) => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-    const view = tab.dataset.view;
-    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
-    $(`#view-${view}`).classList.remove('hidden');
-    $('#fab').classList.toggle('hidden', view === 'settings');
-  });
+  tab.addEventListener('click', () => switchView(tab.dataset.view));
 });
 
 $('#profile-select').addEventListener('change', (e) => {
   state.currentProfileId = e.target.value;
   localStorage.setItem('finanzapp.profile', state.currentProfileId);
+  updateInventoryTab();
   render();
 });
 
@@ -443,7 +499,10 @@ $('#modal-backdrop').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 //  Agregar movimiento
 // ---------------------------------------------------------------------------
-$('#fab').addEventListener('click', openTxForm);
+$('#fab').addEventListener('click', () => {
+  if (!$('#view-inventory').classList.contains('hidden')) openProductForm();
+  else openTxForm();
+});
 
 function openTxForm() {
   if (!currentProfile()) return;
@@ -530,6 +589,105 @@ function openTxActions(t) {
     closeModal();
   });
   openModal('Movimiento', node);
+}
+
+// ---------------------------------------------------------------------------
+//  Inventario (productos)
+// ---------------------------------------------------------------------------
+function openProductForm(existing) {
+  if (!currentProfile()) return;
+  let kind = existing?.kind || 'product';
+  const node = document.createElement('div');
+  node.innerHTML = `
+    <label class="stacked">Nombre<input type="text" id="pr-name" maxlength="60" value="${existing ? esc(existing.name) : ''}" placeholder="Ej. Caja grande" /></label>
+    <div class="segmented">
+      <button type="button" data-k="product">Producto</button>
+      <button type="button" data-k="material">Material</button>
+    </div>
+    <label class="stacked">Stock ${existing ? 'actual' : 'inicial'}<input type="number" id="pr-stock" inputmode="numeric" min="0" step="any" value="${existing ? existing.stock : ''}" placeholder="0" /></label>
+    <label class="stacked">Precio de venta (opcional)<input type="number" id="pr-price" inputmode="numeric" min="0" step="any" value="${existing?.price || ''}" placeholder="0" /></label>
+    <label class="stacked">Stock mínimo para alerta (opcional)<input type="number" id="pr-min" inputmode="numeric" min="0" step="any" value="${existing?.minStock || ''}" placeholder="0" /></label>
+    <p id="pr-error" class="error hidden"></p>
+    <button class="btn btn-filled btn-block" id="pr-save">${existing ? 'Guardar cambios' : 'Crear producto'}</button>`;
+  const kbtns = node.querySelectorAll('.segmented button');
+  const setKind = (k) => {
+    kind = k;
+    kbtns.forEach((b) => b.classList.toggle('active-neutral', b.dataset.k === k));
+  };
+  kbtns.forEach((b) => b.addEventListener('click', () => setKind(b.dataset.k)));
+  setKind(kind);
+
+  node.querySelector('#pr-save').addEventListener('click', async () => {
+    const name = node.querySelector('#pr-name').value.trim();
+    const stock = parseFloat(node.querySelector('#pr-stock').value) || 0;
+    const price = parseFloat(node.querySelector('#pr-price').value) || 0;
+    const minStock = parseFloat(node.querySelector('#pr-min').value) || 0;
+    const err = node.querySelector('#pr-error');
+    if (!name) {
+      err.textContent = 'Ponle un nombre al producto.';
+      err.classList.remove('hidden');
+      return;
+    }
+    if (existing) {
+      await updateDoc(doc(col('products'), existing.id), {
+        name, kind, stock, price, minStock, updatedAt: serverTimestamp(),
+      });
+    } else {
+      await addDoc(col('products'), {
+        profileId: state.currentProfileId, name, kind, stock, price, minStock,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+    }
+    closeModal();
+  });
+  openModal(existing ? 'Editar producto' : 'Nuevo producto', node);
+}
+
+function openProductActions(p) {
+  const low = isLowStock(p);
+  const node = document.createElement('div');
+  node.innerHTML = `
+    <div class="settings-row">
+      <div><span class="name">${esc(p.name)}</span>
+      <span class="chip">${p.kind === 'material' ? 'Material' : 'Producto'}</span>
+      <div class="sub">Stock: ${p.stock}${low ? ' ⚠️ bajo' : ''}${p.price > 0 ? ' · ' + money(p.price) : ''}</div></div>
+    </div>
+    <label class="stacked">Reabastecer (cantidad a sumar)<input type="number" id="rs-qty" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
+    <label class="stacked">Costo de la compra (opcional, lo registra como gasto)<input type="number" id="rs-cost" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
+    <button class="btn btn-filled btn-block" id="rs-do"><span class="material-symbols-rounded">add_box</span>Reabastecer</button>
+    <button class="btn btn-tonal btn-block" id="pr-edit"><span class="material-symbols-rounded">edit</span>Editar producto</button>
+    <button class="btn btn-danger btn-block" id="pr-del"><span class="material-symbols-rounded">delete</span>Eliminar</button>`;
+
+  node.querySelector('#rs-do').addEventListener('click', async () => {
+    const qty = parseFloat(node.querySelector('#rs-qty').value) || 0;
+    const cost = parseFloat(node.querySelector('#rs-cost').value) || 0;
+    if (qty <= 0) return;
+    await updateDoc(doc(col('products'), p.id), {
+      stock: (p.stock || 0) + qty, updatedAt: serverTimestamp(),
+    });
+    if (cost > 0) {
+      const cat =
+        state.categories.find((c) => c.profileType === 'business' && c.name === 'Mercancía') ||
+        state.categories.find((c) => c.profileType === 'business' && c.type === 'expense');
+      if (cat) {
+        await addDoc(col('transactions'), {
+          profileId: state.currentProfileId, type: 'expense', amount: cost, categoryId: cat.id,
+          date: todayIso(), note: `Reabastecer ${p.name} (+${qty})`, createdAt: serverTimestamp(),
+        });
+      }
+    }
+    closeModal();
+  });
+  node.querySelector('#pr-edit').addEventListener('click', () => {
+    closeModal();
+    openProductForm(p);
+  });
+  node.querySelector('#pr-del').addEventListener('click', async () => {
+    if (!confirm(`¿Eliminar el producto "${p.name}"?`)) return;
+    await deleteDoc(doc(col('products'), p.id));
+    closeModal();
+  });
+  openModal('Producto', node);
 }
 
 // ---------------------------------------------------------------------------

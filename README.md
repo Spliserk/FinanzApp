@@ -41,8 +41,11 @@ Luego abre <http://localhost:8080>.
 - Movimientos (ingresos/gastos) con categoría, monto, fecha y nota.
 - Tablero: saldo, ingresos/gastos del mes y desglose por categoría.
 - Categorías por defecto y personalizables.
-- Sincronización en tiempo real + offline (indicador ● arriba a la derecha).
+- **Inventario** (solo perfiles de Negocio): productos y materiales con stock,
+  precio y stock mínimo; reabastecer (con gasto automático opcional), editar y eliminar.
+- Diseño **Material Design 3** (Roboto, Material Symbols, ripple, bottom sheets).
+- Sincronización en tiempo real + offline (indicador de nube arriba a la derecha).
 
 ## Pendiente (siguientes iteraciones)
-Inventario, pedidos, contratos de alquiler, recibos PDF y analíticas —
+Ventas/pedidos, contratos de alquiler, recibos PDF y analíticas —
 se irán sumando sobre esta base que ya sincroniza.

@@ -171,6 +171,7 @@ input[type='color'] { height: 48px; padding: 4px; }
 .tx-amount { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tx-amount.income { color: var(--income); }
 .tx-amount.expense { color: var(--expense); }
+.low-stock { color: var(--expense); }
 .empty { text-align: center; color: var(--on-surface-variant); padding: 56px 24px; }
 .empty .material-symbols-rounded { font-size: 56px; opacity: 0.5; }
 .empty p { margin-top: 12px; line-height: 1.5; }

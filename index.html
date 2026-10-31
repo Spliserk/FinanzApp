@@ -85,6 +85,15 @@
         </div>
       </section>
 
+      <!-- Vista: Inventario (solo negocios) -->
+      <section id="view-inventory" class="view hidden">
+        <div id="inv-list" class="tx-list"></div>
+        <div id="inv-empty" class="empty hidden">
+          <span class="material-symbols-rounded">inventory_2</span>
+          <p>No hay productos todavía.<br />Toca ＋ para agregar uno.</p>
+        </div>
+      </section>
+
       <!-- Vista: Ajustes -->
       <section id="view-settings" class="view hidden">
         <h2 class="section-title">Perfiles</h2>
@@ -124,6 +133,10 @@
         <button class="nav-item" data-view="transactions">
           <span class="nav-indicator"><span class="material-symbols-rounded">receipt_long</span></span>
           <span class="nav-label">Movimientos</span>
+        </button>
+        <button class="nav-item hidden" data-view="inventory" id="nav-inventory">
+          <span class="nav-indicator"><span class="material-symbols-rounded">inventory_2</span></span>
+          <span class="nav-label">Inventario</span>
         </button>
         <button class="nav-item" data-view="settings">
           <span class="nav-indicator"><span class="material-symbols-rounded">settings</span></span>
