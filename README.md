@@ -50,8 +50,8 @@ Luego abre <http://localhost:8080>.
   con pago por cobrar/pagado; las unidades reducen la disponibilidad (no el stock) y
   vuelven al devolver; el ingreso se registra al aprobar el pago.
 - El perfil de negocio tiene **modo** (Ventas o Alquiler) que define sus pestañas.
+- **Recibos**: desde un pedido o contrato se genera un recibo imprimible
+  (el navegador permite "Guardar como PDF") con número, cliente, artículos y total.
+- **Analíticas**: gráfico de ingresos vs gastos de los últimos 6 meses en el tablero.
 - Diseño **Material Design 3** (Roboto, Material Symbols, ripple, bottom sheets).
 - Sincronización en tiempo real + offline (indicador de nube arriba a la derecha).
-
-## Pendiente (siguientes iteraciones)
-Recibos PDF y analíticas — se irán sumando sobre esta base que ya sincroniza.

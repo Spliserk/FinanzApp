@@ -484,6 +484,40 @@ function renderDashboard() {
       <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${pct}%;background:${cat?.color || '#6B7280'}"></div></div>`;
     wrap.appendChild(row);
   }
+
+  renderMonthlyTrend(txs);
+}
+
+/** Gráfico de ingresos vs gastos de los últimos 6 meses del perfil actual. */
+function renderMonthlyTrend(txs) {
+  const wrap = $('#monthly-trend');
+  if (!wrap) return;
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    months.push({ key, label: d.toLocaleDateString('es', { month: 'short' }), income: 0, expense: 0 });
+  }
+  for (const t of txs) {
+    const m = months.find((x) => (t.date || '').startsWith(x.key));
+    if (!m) continue;
+    if (t.type === 'income') m.income += t.amount;
+    else m.expense += t.amount;
+  }
+  const max = Math.max(1, ...months.map((m) => Math.max(m.income, m.expense)));
+  wrap.innerHTML = months
+    .map(
+      (m) => `
+      <div class="mt-col">
+        <div class="mt-bars">
+          <div class="mt-bar mt-income" style="height:${(m.income / max) * 100}%" title="Ingresos ${money(m.income)}"></div>
+          <div class="mt-bar mt-expense" style="height:${(m.expense / max) * 100}%" title="Gastos ${money(m.expense)}"></div>
+        </div>
+        <div class="mt-label">${m.label}</div>
+      </div>`,
+    )
+    .join('');
 }
 
 function renderTransactions() {
@@ -531,6 +565,36 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
   );
+}
+
+// --- Recibos (impresión → "Guardar como PDF" desde el navegador) ---
+function formatReceiptNumber(date, id) {
+  return `${(date || todayIso()).replace(/-/g, '')}-${(id || '').slice(-4).toUpperCase()}`;
+}
+function printReceipt({ title, id, date, customer, items, extraLabel, extraValue, total }) {
+  const rows = (items || [])
+    .map(
+      (it) =>
+        `<tr><td>${esc(it.name)}</td><td class="num">${it.qty}</td><td class="num">${money(it.price)}</td><td class="num">${money(it.qty * it.price)}</td></tr>`,
+    )
+    .join('');
+  const business = currentProfile()?.name || 'FinanzApp';
+  $('#print-area').innerHTML = `
+    <div class="receipt">
+      <h1>${esc(business)}</h1>
+      <div class="r-sub">${esc(title)} — Recibo</div>
+      <div class="r-meta"><span>Recibo N.º</span><strong>${formatReceiptNumber(date, id)}</strong></div>
+      <div class="r-meta"><span>Fecha</span><span>${esc(date || todayIso())}</span></div>
+      <div class="r-meta"><span>Cliente</span><span>${esc(customer || 'Cliente')}</span></div>
+      <table>
+        <thead><tr><th>Artículo</th><th class="num">Cant.</th><th class="num">P. unit.</th><th class="num">Subtotal</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${extraValue ? `<div class="r-meta"><span>${esc(extraLabel)}</span><span>${money(extraValue)}</span></div>` : ''}
+      <div class="r-total"><span>Total</span><span>${money(total)}</span></div>
+      <div class="r-foot">¡Gracias por su preferencia!</div>
+    </div>`;
+  window.print();
 }
 
 // ---------------------------------------------------------------------------
@@ -935,9 +999,16 @@ function openOrderDetails(o) {
     ${o.shipping > 0 ? `<div class="settings-row"><span class="muted">Envío</span><strong>${money(o.shipping)}</strong></div>` : ''}
     <div class="ord-total"><span>Total</span><span>${money(o.total)}</span></div>
     ${o.note ? `<p class="muted">${esc(o.note)}</p>` : ''}
+    <button class="btn btn-outlined btn-block" id="ord-receipt"><span class="material-symbols-rounded">receipt_long</span>Recibo</button>
     ${nextBtns}
     ${canCancel ? `<button class="btn btn-danger btn-block" id="ord-cancel"><span class="material-symbols-rounded">cancel</span>Cancelar pedido</button>` : ''}`;
 
+  node.querySelector('#ord-receipt').addEventListener('click', () =>
+    printReceipt({
+      title: 'Pedido', id: o.id, date: o.date, customer: o.customerName, items: o.items,
+      extraLabel: 'Envío', extraValue: o.shipping, total: o.total,
+    }),
+  );
   node.querySelectorAll('.ord-next').forEach((b) =>
     b.addEventListener('click', async () => {
       await updateDoc(doc(col('orders'), o.id), { status: b.dataset.s, updatedAt: serverTimestamp() });
@@ -1118,10 +1189,17 @@ function openContractDetails(c) {
     ${itemsHtml}
     <div class="ord-total"><span>Total</span><span>${money(c.total)}</span></div>
     ${c.note ? `<p class="muted">${esc(c.note)}</p>` : ''}
+    <button class="btn btn-outlined btn-block" id="ct-receipt"><span class="material-symbols-rounded">receipt_long</span>Recibo</button>
     ${payBtn}
     ${lifeBtns}
     ${canCancel ? `<button class="btn btn-danger btn-block" id="ct-cancel"><span class="material-symbols-rounded">cancel</span>Cancelar contrato</button>` : ''}`;
 
+  node.querySelector('#ct-receipt').addEventListener('click', () =>
+    printReceipt({
+      title: 'Alquiler', id: c.id, date: c.date, customer: c.customerName, items: c.items,
+      extraLabel: 'Ajuste', extraValue: c.adjust, total: c.total,
+    }),
+  );
   const pickup = node.querySelector('#ct-pickup');
   if (pickup)
     pickup.addEventListener('click', async () => {
