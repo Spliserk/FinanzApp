@@ -51,6 +51,23 @@ const state = {
 };
 
 const $ = (sel) => document.querySelector(sel);
+
+// Efecto ripple de Material: delegado a elementos interactivos.
+const RIPPLE_SEL = '.btn, .fab, .nav-item, .tx-item, .settings-row, .icon-btn, .segmented button';
+document.addEventListener('pointerdown', (e) => {
+  const host = e.target.closest(RIPPLE_SEL);
+  if (!host) return;
+  const rect = host.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height);
+  const span = document.createElement('span');
+  span.className = 'ripple';
+  span.style.width = span.style.height = `${size}px`;
+  span.style.left = `${e.clientX - rect.left - size / 2}px`;
+  span.style.top = `${e.clientY - rect.top - size / 2}px`;
+  if (getComputedStyle(host).position === 'static') host.classList.add('ripple-host');
+  host.appendChild(span);
+  span.addEventListener('animationend', () => span.remove());
+});
 const fmt = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
@@ -229,11 +246,14 @@ function setSyncBadge(status) {
   el.classList.remove('offline', 'syncing');
   if (!navigator.onLine) {
     el.classList.add('offline');
+    el.textContent = 'cloud_off';
     el.title = 'Sin conexión — se sincronizará al volver';
   } else if (status === 'syncing') {
     el.classList.add('syncing');
+    el.textContent = 'cloud_sync';
     el.title = 'Sincronizando…';
   } else {
+    el.textContent = 'cloud_done';
     el.title = 'Sincronizado';
   }
 }
@@ -292,7 +312,7 @@ function renderProfiles() {
     if (state.profiles.length > 1) {
       const del = document.createElement('button');
       del.className = 'icon-btn';
-      del.textContent = '🗑';
+      del.innerHTML = '<span class="material-symbols-rounded">delete</span>';
       del.onclick = () => deleteProfile(p);
       row.appendChild(del);
     }
@@ -345,10 +365,12 @@ function renderTransactions() {
     const item = document.createElement('div');
     item.className = 'tx-item';
     item.innerHTML = `
-      <span class="tx-dot" style="background:${cat?.color || '#6B7280'}"></span>
+      <span class="tx-icon" style="background:${cat?.color || '#6B7280'}">
+        <span class="material-symbols-rounded">${t.type === 'income' ? 'arrow_upward' : 'arrow_downward'}</span>
+      </span>
       <div class="tx-main">
         <div class="tx-cat">${esc(cat?.name || 'Sin categoría')}</div>
-        <div class="tx-meta">${esc(t.date || '')}${t.note ? ' · <span class="tx-note">' + esc(t.note) + '</span>' : ''}</div>
+        <div class="tx-meta">${esc(t.date || '')}${t.note ? ' · ' + esc(t.note) : ''}</div>
       </div>
       <span class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</span>`;
     item.onclick = () => openTxActions(t);
@@ -367,7 +389,7 @@ function renderCategoriesList() {
       <span class="chip" style="background:${c.color}22;color:${c.color}">${c.type === 'income' ? 'Ingreso' : 'Gasto'}</span></div>`;
     const del = document.createElement('button');
     del.className = 'icon-btn';
-    del.textContent = '🗑';
+    del.innerHTML = '<span class="material-symbols-rounded">delete</span>';
     del.onclick = () => deleteDoc(doc(col('categories'), c.id));
     row.appendChild(del);
     list.appendChild(row);
@@ -383,9 +405,9 @@ function esc(s) {
 // ---------------------------------------------------------------------------
 //  Navegación (tabs)
 // ---------------------------------------------------------------------------
-document.querySelectorAll('.tab').forEach((tab) => {
+document.querySelectorAll('.nav-item').forEach((tab) => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach((t) => t.classList.remove('active'));
     tab.classList.add('active');
     const view = tab.dataset.view;
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
@@ -432,12 +454,12 @@ function openTxForm() {
       <button type="button" data-t="income">Ingreso</button>
       <button type="button" data-t="expense">Gasto</button>
     </div>
-    <label>Monto<input type="number" id="f-amount" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
-    <label>Categoría<select id="f-category"></select></label>
-    <label>Fecha<input type="date" id="f-date" value="${todayIso()}" /></label>
-    <label>Nota (opcional)<input type="text" id="f-note" maxlength="120" /></label>
+    <label class="stacked">Monto<input type="number" id="f-amount" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
+    <label class="stacked">Categoría<select id="f-category"></select></label>
+    <label class="stacked">Fecha<input type="date" id="f-date" value="${todayIso()}" /></label>
+    <label class="stacked">Nota (opcional)<input type="text" id="f-note" maxlength="120" /></label>
     <p id="f-error" class="error hidden"></p>
-    <button id="f-save" class="btn btn-primary btn-block">Guardar</button>`;
+    <button id="f-save" class="btn btn-filled btn-block">Guardar</button>`;
 
   const segBtns = node.querySelectorAll('.segmented button');
   const fillCats = () => {
@@ -502,7 +524,7 @@ function openTxActions(t) {
       <strong class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</strong>
     </div>
     ${t.note ? `<p class="muted">${esc(t.note)}</p>` : ''}
-    <button class="btn btn-danger btn-block" id="tx-del">Eliminar movimiento</button>`;
+    <button class="btn btn-danger btn-block" id="tx-del"><span class="material-symbols-rounded">delete</span>Eliminar movimiento</button>`;
   node.querySelector('#tx-del').addEventListener('click', async () => {
     await deleteDoc(doc(col('transactions'), t.id));
     closeModal();
@@ -517,19 +539,19 @@ $('#add-profile-btn').addEventListener('click', () => {
   let type = 'personal';
   const node = document.createElement('div');
   node.innerHTML = `
-    <label>Nombre<input type="text" id="p-name" maxlength="40" placeholder="Mi negocio" /></label>
+    <label class="stacked">Nombre<input type="text" id="p-name" maxlength="40" placeholder="Mi negocio" /></label>
     <div class="segmented">
-      <button type="button" data-t="personal" class="active-income">Personal</button>
+      <button type="button" data-t="personal" class="active-neutral">Personal</button>
       <button type="button" data-t="business">Negocio</button>
     </div>
     <p id="p-error" class="error hidden"></p>
-    <button class="btn btn-primary btn-block" id="p-save">Crear perfil</button>`;
+    <button class="btn btn-filled btn-block" id="p-save">Crear perfil</button>`;
   const btns = node.querySelectorAll('.segmented button');
   btns.forEach((b) =>
     b.addEventListener('click', () => {
       type = b.dataset.t;
-      btns.forEach((x) => x.classList.remove('active-income'));
-      b.classList.add('active-income');
+      btns.forEach((x) => x.classList.remove('active-neutral'));
+      b.classList.add('active-neutral');
     }),
   );
   node.querySelector('#p-save').addEventListener('click', async () => {
@@ -567,14 +589,14 @@ $('#add-category-btn').addEventListener('click', () => {
   let type = 'expense';
   const node = document.createElement('div');
   node.innerHTML = `
-    <label>Nombre<input type="text" id="c-name" maxlength="40" placeholder="Ej. Materiales" /></label>
+    <label class="stacked">Nombre<input type="text" id="c-name" maxlength="40" placeholder="Ej. Materiales" /></label>
     <div class="segmented">
       <button type="button" data-t="income">Ingreso</button>
       <button type="button" data-t="expense" class="active-expense">Gasto</button>
     </div>
-    <label>Color<input type="color" id="c-color" value="#6B7280" /></label>
+    <label class="stacked">Color<input type="color" id="c-color" value="#6B7280" /></label>
     <p id="c-error" class="error hidden"></p>
-    <button class="btn btn-primary btn-block" id="c-save">Crear categoría</button>`;
+    <button class="btn btn-filled btn-block" id="c-save">Crear categoría</button>`;
   const btns = node.querySelectorAll('.segmented button');
   btns.forEach((b) =>
     b.addEventListener('click', () => {

@@ -3,8 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#2563EB" />
+    <meta name="theme-color" content="#1b61d1" />
     <title>FinanzApp</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
@@ -16,19 +26,22 @@
     <!-- Pantalla de login -->
     <section id="auth" class="auth hidden">
       <div class="auth-card">
+        <div class="auth-logo"><span class="material-symbols-rounded">account_balance_wallet</span></div>
         <h1 class="brand">FinanzApp</h1>
         <p class="auth-sub">Controla tus finanzas, sincronizado en todos tus dispositivos.</p>
         <form id="auth-form">
-          <label>Correo
-            <input type="email" id="auth-email" autocomplete="email" required />
-          </label>
-          <label>Contraseña
-            <input type="password" id="auth-password" autocomplete="current-password" minlength="6" required />
-          </label>
+          <div class="field">
+            <input type="email" id="auth-email" autocomplete="email" placeholder=" " required />
+            <label for="auth-email">Correo</label>
+          </div>
+          <div class="field">
+            <input type="password" id="auth-password" autocomplete="current-password" placeholder=" " minlength="6" required />
+            <label for="auth-password">Contraseña</label>
+          </div>
           <p id="auth-error" class="error hidden"></p>
-          <button type="submit" id="auth-submit" class="btn btn-primary btn-block">Entrar</button>
+          <button type="submit" id="auth-submit" class="btn btn-filled btn-block">Entrar</button>
         </form>
-        <button id="auth-toggle" class="link">¿No tienes cuenta? Regístrate</button>
+        <button id="auth-toggle" class="btn btn-text btn-block">¿No tienes cuenta? Regístrate</button>
       </div>
     </section>
 
@@ -38,7 +51,7 @@
         <div class="topbar-left">
           <select id="profile-select" class="profile-select" aria-label="Perfil"></select>
         </div>
-        <div id="sync-badge" class="sync-badge" title="Estado de sincronización">●</div>
+        <span id="sync-badge" class="sync-badge material-symbols-rounded" title="Estado de sincronización">cloud_done</span>
       </header>
 
       <!-- Vista: Tablero -->
@@ -49,12 +62,14 @@
         </div>
         <div class="stat-row">
           <div class="stat stat-income">
-            <span class="stat-label">Ingresos (mes)</span>
-            <span id="month-income" class="stat-value">$0</span>
+            <span class="material-symbols-rounded stat-icon">trending_up</span>
+            <div><span class="stat-label">Ingresos (mes)</span>
+            <span id="month-income" class="stat-value">$0</span></div>
           </div>
           <div class="stat stat-expense">
-            <span class="stat-label">Gastos (mes)</span>
-            <span id="month-expense" class="stat-value">$0</span>
+            <span class="material-symbols-rounded stat-icon">trending_down</span>
+            <div><span class="stat-label">Gastos (mes)</span>
+            <span id="month-expense" class="stat-value">$0</span></div>
           </div>
         </div>
         <h2 class="section-title">Por categoría (mes)</h2>
@@ -64,18 +79,25 @@
       <!-- Vista: Movimientos -->
       <section id="view-transactions" class="view hidden">
         <div id="tx-list" class="tx-list"></div>
-        <div id="tx-empty" class="empty hidden">Aún no hay movimientos. Toca ＋ para agregar uno.</div>
+        <div id="tx-empty" class="empty hidden">
+          <span class="material-symbols-rounded">receipt_long</span>
+          <p>Aún no hay movimientos.<br />Toca ＋ para agregar uno.</p>
+        </div>
       </section>
 
       <!-- Vista: Ajustes -->
       <section id="view-settings" class="view hidden">
         <h2 class="section-title">Perfiles</h2>
         <div id="profiles-list" class="settings-list"></div>
-        <button id="add-profile-btn" class="btn btn-secondary btn-block">＋ Nuevo perfil</button>
+        <button id="add-profile-btn" class="btn btn-tonal btn-block">
+          <span class="material-symbols-rounded">add</span>Nuevo perfil
+        </button>
 
         <h2 class="section-title">Categorías del perfil</h2>
         <div id="categories-list" class="settings-list"></div>
-        <button id="add-category-btn" class="btn btn-secondary btn-block">＋ Nueva categoría</button>
+        <button id="add-category-btn" class="btn btn-tonal btn-block">
+          <span class="material-symbols-rounded">add</span>Nueva categoría
+        </button>
 
         <h2 class="section-title">Cuenta</h2>
         <div class="settings-list">
@@ -83,26 +105,42 @@
             <span id="account-email" class="muted"></span>
           </div>
         </div>
-        <button id="signout-btn" class="btn btn-danger btn-block">Cerrar sesión</button>
+        <button id="signout-btn" class="btn btn-outlined btn-block">
+          <span class="material-symbols-rounded">logout</span>Cerrar sesión
+        </button>
       </section>
 
-      <!-- Botón flotante agregar -->
-      <button id="fab" class="fab" aria-label="Agregar movimiento">＋</button>
+      <!-- Botón flotante agregar (FAB) -->
+      <button id="fab" class="fab" aria-label="Agregar movimiento">
+        <span class="material-symbols-rounded">add</span>
+      </button>
 
-      <!-- Navegación inferior -->
-      <nav class="tabbar">
-        <button class="tab active" data-view="dashboard"><span>Tablero</span></button>
-        <button class="tab" data-view="transactions"><span>Movimientos</span></button>
-        <button class="tab" data-view="settings"><span>Ajustes</span></button>
+      <!-- Navegación inferior (Navigation Bar) -->
+      <nav class="navbar">
+        <button class="nav-item active" data-view="dashboard">
+          <span class="nav-indicator"><span class="material-symbols-rounded">dashboard</span></span>
+          <span class="nav-label">Tablero</span>
+        </button>
+        <button class="nav-item" data-view="transactions">
+          <span class="nav-indicator"><span class="material-symbols-rounded">receipt_long</span></span>
+          <span class="nav-label">Movimientos</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <span class="nav-indicator"><span class="material-symbols-rounded">settings</span></span>
+          <span class="nav-label">Ajustes</span>
+        </button>
       </nav>
     </main>
 
-    <!-- Modal genérico -->
+    <!-- Modal genérico (Bottom sheet) -->
     <div id="modal-backdrop" class="modal-backdrop hidden">
       <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-handle"></div>
         <div class="modal-header">
           <h3 id="modal-title">Título</h3>
-          <button id="modal-close" class="icon-btn" aria-label="Cerrar">✕</button>
+          <button id="modal-close" class="icon-btn" aria-label="Cerrar">
+            <span class="material-symbols-rounded">close</span>
+          </button>
         </div>
         <div id="modal-body" class="modal-body"></div>
       </div>
