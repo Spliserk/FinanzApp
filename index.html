@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#1b61d1" />
     <title>FinanzApp</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon-192.png" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="FinanzApp" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -42,6 +48,7 @@
           <button type="submit" id="auth-submit" class="btn btn-filled btn-block">Entrar</button>
         </form>
         <button id="auth-toggle" class="btn btn-text btn-block">¿No tienes cuenta? Regístrate</button>
+        <button id="auth-forgot" class="btn btn-text btn-block">¿Olvidaste tu contraseña?</button>
       </div>
     </section>
 
@@ -94,6 +101,9 @@
 
       <!-- Vista: Inventario (solo negocios) -->
       <section id="view-inventory" class="view hidden">
+        <button id="production-btn" class="btn btn-tonal btn-block" style="margin-bottom:12px">
+          <span class="material-symbols-rounded">precision_manufacturing</span>Registrar producción
+        </button>
         <div id="inv-list" class="tx-list"></div>
         <div id="inv-empty" class="empty hidden">
           <span class="material-symbols-rounded">inventory_2</span>

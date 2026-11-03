@@ -53,6 +53,7 @@ html, body {
 .hidden { display: none !important; }
 .muted { color: var(--on-surface-variant); }
 .error { color: var(--error); font-size: 0.875rem; margin: 4px 0; }
+.error.ok { color: var(--income); }
 
 /* ---------- Splash ---------- */
 .splash { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface); z-index: 100; }
@@ -255,6 +256,9 @@ input[type='color'] { height: 48px; padding: 4px; }
 .icon-btn { background: none; border: none; color: var(--on-surface-variant); cursor: pointer; padding: 8px; border-radius: 50%; display: flex; }
 .icon-btn .material-symbols-rounded { font-size: 22px; }
 .modal-body { padding: 8px 24px 16px; display: flex; flex-direction: column; gap: 16px; }
+/* El contenido del modal es un único <div>; lo espaciamos uniformemente para
+   que los botones y campos no queden pegados. */
+.modal-body > div { display: flex; flex-direction: column; gap: 14px; }
 
 /* Segmented (M3 segmented button) */
 .segmented { display: flex; border: 1px solid var(--outline-variant); border-radius: 20px; overflow: hidden; }

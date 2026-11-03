@@ -10,6 +10,7 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
@@ -146,6 +147,26 @@ $('#auth-form').addEventListener('submit', async (e) => {
     errEl.classList.remove('hidden');
   } finally {
     btn.disabled = false;
+  }
+});
+
+$('#auth-forgot').addEventListener('click', async () => {
+  const email = $('#auth-email').value.trim();
+  const errEl = $('#auth-error');
+  errEl.classList.remove('ok');
+  if (!email) {
+    errEl.textContent = 'Escribe tu correo arriba y vuelve a tocar aquí.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  try {
+    await sendPasswordResetEmail(auth, email);
+    errEl.textContent = 'Te enviamos un correo para restablecer tu contraseña. Revisa tu bandeja (y spam).';
+    errEl.classList.add('ok');
+    errEl.classList.remove('hidden');
+  } catch (err) {
+    errEl.textContent = authErrorMessage(err.code);
+    errEl.classList.remove('hidden');
   }
 });
 
@@ -339,6 +360,9 @@ const CONTRACT_STATUS = {
 };
 function isRentalProfile() {
   return currentProfile()?.mode === 'rental';
+}
+function isContractOverdue(c) {
+  return (c.status === 'reserved' || c.status === 'picked_up') && c.dueDate && c.dueDate < todayIso();
 }
 function profileContracts() {
   return state.contracts
@@ -645,21 +669,21 @@ $('#fab').addEventListener('click', () => {
   else openTxForm();
 });
 
-function openTxForm() {
+function openTxForm(existing) {
   if (!currentProfile()) return;
-  let txType = 'expense';
+  let txType = existing?.type || 'expense';
   const node = document.createElement('div');
   node.innerHTML = `
     <div class="segmented">
       <button type="button" data-t="income">Ingreso</button>
       <button type="button" data-t="expense">Gasto</button>
     </div>
-    <label class="stacked">Monto<input type="number" id="f-amount" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
+    <label class="stacked">Monto<input type="number" id="f-amount" inputmode="numeric" min="0" step="any" value="${existing ? existing.amount : ''}" placeholder="0" /></label>
     <label class="stacked">Categoría<select id="f-category"></select></label>
-    <label class="stacked">Fecha<input type="date" id="f-date" value="${todayIso()}" /></label>
-    <label class="stacked">Nota (opcional)<input type="text" id="f-note" maxlength="120" /></label>
+    <label class="stacked">Fecha<input type="date" id="f-date" value="${existing?.date || todayIso()}" /></label>
+    <label class="stacked">Nota (opcional)<input type="text" id="f-note" maxlength="120" value="${existing ? esc(existing.note || '') : ''}" /></label>
     <p id="f-error" class="error hidden"></p>
-    <button id="f-save" class="btn btn-filled btn-block">Guardar</button>`;
+    <button id="f-save" class="btn btn-filled btn-block">${existing ? 'Guardar cambios' : 'Guardar'}</button>`;
 
   const segBtns = node.querySelectorAll('.segmented button');
   const fillCats = () => {
@@ -669,6 +693,7 @@ function openTxForm() {
       const o = document.createElement('option');
       o.value = c.id;
       o.textContent = c.name;
+      if (existing && c.id === existing.categoryId) o.selected = true;
       sel.appendChild(o);
     }
   };
@@ -681,7 +706,7 @@ function openTxForm() {
     fillCats();
   };
   segBtns.forEach((b) => b.addEventListener('click', () => setType(b.dataset.t)));
-  setType('expense');
+  setType(txType);
 
   node.querySelector('#f-save').addEventListener('click', async () => {
     const amount = parseFloat(node.querySelector('#f-amount').value);
@@ -699,19 +724,20 @@ function openTxForm() {
       err.classList.remove('hidden');
       return;
     }
-    await addDoc(col('transactions'), {
-      profileId: state.currentProfileId,
-      type: txType,
-      amount,
-      categoryId,
-      date,
-      note,
-      createdAt: serverTimestamp(),
-    });
+    if (existing) {
+      await updateDoc(doc(col('transactions'), existing.id), {
+        type: txType, amount, categoryId, date, note, updatedAt: serverTimestamp(),
+      });
+    } else {
+      await addDoc(col('transactions'), {
+        profileId: state.currentProfileId, type: txType, amount, categoryId, date, note,
+        createdAt: serverTimestamp(),
+      });
+    }
     closeModal();
   });
 
-  openModal('Nuevo movimiento', node);
+  openModal(existing ? 'Editar movimiento' : 'Nuevo movimiento', node);
 }
 
 function openTxActions(t) {
@@ -724,7 +750,12 @@ function openTxActions(t) {
       <strong class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</strong>
     </div>
     ${t.note ? `<p class="muted">${esc(t.note)}</p>` : ''}
+    <button class="btn btn-tonal btn-block" id="tx-edit"><span class="material-symbols-rounded">edit</span>Editar movimiento</button>
     <button class="btn btn-danger btn-block" id="tx-del"><span class="material-symbols-rounded">delete</span>Eliminar movimiento</button>`;
+  node.querySelector('#tx-edit').addEventListener('click', () => {
+    closeModal();
+    openTxForm(t);
+  });
   node.querySelector('#tx-del').addEventListener('click', async () => {
     await deleteDoc(doc(col('transactions'), t.id));
     closeModal();
@@ -830,6 +861,84 @@ function openProductActions(p) {
   });
   openModal('Producto', node);
 }
+
+// Producción libre: consumir materiales y producir productos, ajustando stock.
+function openProductionForm() {
+  if (!currentProfile()) return;
+  const materials = profileProducts().filter((p) => p.kind === 'material');
+  const products = profileProducts().filter((p) => p.kind === 'product');
+  const node = document.createElement('div');
+  node.innerHTML = `
+    <p class="muted">Declara qué materiales consumes y qué productos produces; se ajusta el stock de cada uno.</p>
+    <div class="section-title" style="margin:4px">Consumir (materiales)</div>
+    <div id="prd-consume"></div>
+    <button type="button" class="btn btn-text" id="prd-add-consume"><span class="material-symbols-rounded">add</span>Agregar material</button>
+    <div class="section-title" style="margin:4px">Producir (productos)</div>
+    <div id="prd-produce"></div>
+    <button type="button" class="btn btn-text" id="prd-add-produce"><span class="material-symbols-rounded">add</span>Agregar producto</button>
+    <p id="prd-error" class="error hidden"></p>
+    <button class="btn btn-filled btn-block" id="prd-save">Registrar producción</button>`;
+
+  const optFor = (list) => list.map((p) => `<option value="${p.id}">${esc(p.name)} (stock ${p.stock})</option>`).join('');
+  function addRow(container, list) {
+    if (!list.length) return;
+    const row = document.createElement('div');
+    row.className = 'ord-item-row';
+    row.innerHTML = `<select>${optFor(list)}</select>
+      <input type="number" inputmode="numeric" min="1" step="any" value="1" />
+      <button type="button" class="icon-btn"><span class="material-symbols-rounded">close</span></button>`;
+    row.querySelector('.icon-btn').addEventListener('click', () => row.remove());
+    container.appendChild(row);
+  }
+  const consumeWrap = node.querySelector('#prd-consume');
+  const produceWrap = node.querySelector('#prd-produce');
+  node.querySelector('#prd-add-consume').addEventListener('click', () => addRow(consumeWrap, materials));
+  node.querySelector('#prd-add-produce').addEventListener('click', () => addRow(produceWrap, products));
+  if (materials.length) addRow(consumeWrap, materials);
+  if (products.length) addRow(produceWrap, products);
+
+  node.querySelector('#prd-save').addEventListener('click', async () => {
+    const err = node.querySelector('#prd-error');
+    const gather = (wrap) => {
+      const map = {};
+      wrap.querySelectorAll('.ord-item-row').forEach((row) => {
+        const id = row.querySelector('select').value;
+        const qty = parseFloat(row.querySelector('input').value) || 0;
+        if (id && qty > 0) map[id] = (map[id] || 0) + qty;
+      });
+      return map;
+    };
+    const consume = gather(consumeWrap);
+    const produce = gather(produceWrap);
+    if (Object.keys(produce).length === 0) {
+      err.textContent = 'Agrega al menos un producto a producir.';
+      err.classList.remove('hidden');
+      return;
+    }
+    for (const [pid, qty] of Object.entries(consume)) {
+      const pr = state.products.find((x) => x.id === pid);
+      if (qty > (pr?.stock || 0)) {
+        err.textContent = `No hay suficiente "${pr?.name}". Disponible: ${pr?.stock || 0}.`;
+        err.classList.remove('hidden');
+        return;
+      }
+    }
+    // Delta neto por producto (por si aparece en ambos lados).
+    const delta = {};
+    for (const [pid, qty] of Object.entries(consume)) delta[pid] = (delta[pid] || 0) - qty;
+    for (const [pid, qty] of Object.entries(produce)) delta[pid] = (delta[pid] || 0) + qty;
+    const batch = writeBatch(db);
+    for (const [pid, d] of Object.entries(delta)) {
+      const pr = state.products.find((x) => x.id === pid);
+      batch.update(doc(col('products'), pid), { stock: (pr.stock || 0) + d, updatedAt: serverTimestamp() });
+    }
+    await batch.commit();
+    closeModal();
+  });
+
+  openModal('Registrar producción', node);
+}
+$('#production-btn').addEventListener('click', openProductionForm);
 
 // ---------------------------------------------------------------------------
 //  Ventas / Pedidos
@@ -1054,7 +1163,7 @@ function renderRentals() {
       <span class="tx-icon" style="background:#8B5CF6"><span class="material-symbols-rounded">event_available</span></span>
       <div class="tx-main">
         <div class="tx-cat">${esc(c.customerName || 'Cliente')}</div>
-        <div class="tx-meta">${count} unidad(es) · ${esc(c.date || '')}</div>
+        <div class="tx-meta">${count} unidad(es) · ${esc(c.date || '')}${isContractOverdue(c) ? ' · <span class="low-stock">atrasado</span>' : ''}</div>
       </div>
       <div style="text-align:right">
         <div class="tx-amount ${paid ? 'income' : ''}">${money(c.total)}</div>
@@ -1078,6 +1187,7 @@ function openContractForm() {
     <div id="ct-items"></div>
     <button type="button" class="btn btn-text" id="ct-add-item"><span class="material-symbols-rounded">add</span>Agregar artículo</button>
     <label class="stacked">Recargo / Descuento (opcional)<input type="number" id="ct-adjust" inputmode="numeric" step="any" placeholder="0" /></label>
+    <label class="stacked">Fecha de devolución (opcional)<input type="date" id="ct-due" /></label>
     <label class="stacked">Nota (opcional)<input type="text" id="ct-note" maxlength="120" /></label>
     <div class="ord-total"><span>Total</span><span id="ct-total-val">$0</span></div>
     <p id="ct-error" class="error hidden"></p>
@@ -1122,6 +1232,7 @@ function openContractForm() {
     const err = node.querySelector('#ct-error');
     const customer = node.querySelector('#ct-customer').value.trim() || 'Cliente';
     const adjust = parseFloat(node.querySelector('#ct-adjust').value) || 0;
+    const dueDate = node.querySelector('#ct-due').value || null;
     const note = node.querySelector('#ct-note').value.trim();
 
     const items = [];
@@ -1151,7 +1262,7 @@ function openContractForm() {
     // Ingreso pendiente hasta registrar el pago.
     await addDoc(col('contracts'), {
       profileId: state.currentProfileId, customerName: customer, items, adjust, total,
-      status: 'reserved', paymentStatus: 'pending', note, date: todayIso(),
+      status: 'reserved', paymentStatus: 'pending', note, date: todayIso(), dueDate,
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
     closeModal();
@@ -1182,7 +1293,7 @@ function openContractDetails(c) {
   const canCancel = c.status === 'reserved' || c.status === 'picked_up';
   node.innerHTML = `
     <div class="settings-row">
-      <div><span class="name">${esc(c.customerName || 'Cliente')}</span><div class="sub">${esc(c.date || '')}</div></div>
+      <div><span class="name">${esc(c.customerName || 'Cliente')}</span><div class="sub">${esc(c.date || '')}${c.dueDate ? ` · Devolver antes de ${esc(c.dueDate)}` : ''}${isContractOverdue(c) ? ' <span class="low-stock">(atrasado)</span>' : ''}</div></div>
       <div style="text-align:right"><span class="status-chip status-${c.status}">${st.label}</span>
       ${c.status !== 'cancelled' ? `<br><span class="status-chip ${paid ? 'pay-paid' : 'pay-pending'}" style="margin-top:4px;display:inline-block">${paid ? 'Pagado' : 'Por cobrar'}</span>` : ''}</div>
     </div>
@@ -1365,4 +1476,9 @@ $('#add-category-btn').addEventListener('click', () => {
 if (firebaseConfig.apiKey === 'PEGA_AQUI_TU_API_KEY') {
   $('#splash').innerHTML =
     '<div style="padding:24px;text-align:center;color:#6b7280">Falta configurar Firebase.<br>Edita <code>js/config.js</code> con las claves de tu proyecto.</div>';
+}
+
+// Registrar el service worker (PWA: instalable + abre offline).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }

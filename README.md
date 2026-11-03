@@ -53,5 +53,11 @@ Luego abre <http://localhost:8080>.
 - **Recibos**: desde un pedido o contrato se genera un recibo imprimible
   (el navegador permite "Guardar como PDF") con número, cliente, artículos y total.
 - **Analíticas**: gráfico de ingresos vs gastos de los últimos 6 meses en el tablero.
+- **Producción libre** (negocio): consumir materiales para producir productos, ajustando
+  el stock de cada uno (p. ej. 1 pliego → 3 cajas).
+- **Editar movimientos**, recuperar contraseña por correo, y fecha de devolución con
+  aviso de "atrasado" en los alquileres.
+- **Instalable (PWA)**: se puede "Agregar a la pantalla de inicio" con ícono propio,
+  abre a pantalla completa y funciona offline.
 - Diseño **Material Design 3** (Roboto, Material Symbols, ripple, bottom sheets).
 - Sincronización en tiempo real + offline (indicador de nube arriba a la derecha).

@@ -1,0 +1,16 @@
+{
+  "name": "FinanzApp",
+  "short_name": "FinanzApp",
+  "description": "Controla tus finanzas, sincronizado en todos tus dispositivos.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf9fd",
+  "theme_color": "#1b61d1",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
