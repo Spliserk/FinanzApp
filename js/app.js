@@ -227,7 +227,6 @@ function defaultCategoriesFor(type) {
 /** Crea un perfil nuevo (de nivel superior, con el creador como miembro) y
  *  siembra sus categorías por defecto. Devuelve el id del perfil. */
 async function createProfile({ name, type, mode }) {
-  const batch = writeBatch(db);
   const ref = doc(profilesCol());
   const data = {
     name,
@@ -238,7 +237,10 @@ async function createProfile({ name, type, mode }) {
     createdAt: serverTimestamp(),
   };
   if (type === 'business') data.mode = mode || 'sales';
-  batch.set(ref, data);
+  // 1) Crear el perfil primero: las reglas necesitan verlo (membresía) para
+  //    permitir escribir en sus subcolecciones. 2) Luego sembrar categorías.
+  await setDoc(ref, data);
+  const batch = writeBatch(db);
   for (const c of defaultCategoriesFor(type)) {
     batch.set(doc(collection(db, 'profiles', ref.id, 'categories')), { ...c, createdAt: serverTimestamp() });
   }
