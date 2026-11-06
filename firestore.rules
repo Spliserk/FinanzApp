@@ -36,9 +36,9 @@ service cloud.firestore {
       }
     }
 
-    // Collection group: el invitado busca sus invitaciones por correo.
-    match /{path=**}/invites/{email} {
-      allow read: if signedIn() && request.auth.token.email == email;
+    // Collection group: el invitado busca sus invitaciones por correo (campo email).
+    match /{path=**}/invites/{inviteId} {
+      allow read: if signedIn() && resource.data.email == request.auth.token.email;
     }
   }
 }
