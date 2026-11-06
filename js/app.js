@@ -18,13 +18,19 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
   collection,
+  collectionGroup,
+  query,
+  where,
   doc,
+  setDoc,
   addDoc,
   updateDoc,
   deleteDoc,
   onSnapshot,
   serverTimestamp,
   writeBatch,
+  arrayUnion,
+  arrayRemove,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 import { firebaseConfig } from './config.js';
@@ -51,8 +57,11 @@ const state = {
   products: [],
   orders: [],
   contracts: [],
+  invites: [], // invitaciones pendientes dirigidas a este usuario
   currentProfileId: null,
-  unsub: [], // funciones para cancelar los listeners al cerrar sesión
+  profileSubFor: null, // de qué perfil están cargados los datos ahora mismo
+  unsub: [], // listeners globales (perfiles + invitaciones); se limpian al salir
+  dataUnsub: [], // listeners de los datos del perfil actual; se limpian al cambiar
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -99,8 +108,12 @@ const DEFAULT_CATEGORIES = [
   { name: 'Otros', type: 'expense', profileType: 'business', color: '#6B7280' },
 ];
 
-// Rutas de colecciones bajo el usuario actual.
-const col = (name) => collection(db, 'users', state.uid, name);
+// --- Rutas de colecciones ---
+// Los perfiles son de nivel superior y tienen una lista de "members" (uids).
+// Los datos de cada perfil cuelgan de él, así se pueden compartir entre usuarios.
+const profilesCol = () => collection(db, 'profiles');
+const pcol = (name, pid = state.currentProfileId) => collection(db, 'profiles', pid, name);
+const pdoc = (name, id, pid = state.currentProfileId) => doc(db, 'profiles', pid, name, id);
 
 // ---------------------------------------------------------------------------
 //  Autenticación
@@ -173,9 +186,12 @@ $('#auth-forgot').addEventListener('click', async () => {
 $('#signout-btn').addEventListener('click', () => signOut(auth));
 
 onAuthStateChanged(auth, async (user) => {
-  // Limpia listeners de la sesión anterior.
+  // Limpia listeners de la sesión anterior (globales y de datos del perfil).
   state.unsub.forEach((fn) => fn());
+  state.dataUnsub.forEach((fn) => fn());
   state.unsub = [];
+  state.dataUnsub = [];
+  state.profileSubFor = null;
 
   if (!user) {
     state.uid = null;
@@ -184,10 +200,14 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   state.uid = user.uid;
-  state.email = user.email;
+  state.email = (user.email || '').toLowerCase();
   $('#account-email').textContent = user.email;
   showScreen('app');
-  await ensureSeedData();
+  try {
+    await ensureSeedData();
+  } catch (e) {
+    console.warn('[seed] no se pudo sembrar (¿faltan publicar las reglas?):', e);
+  }
   subscribeAll();
 });
 
@@ -200,19 +220,37 @@ function showScreen(name) {
 // ---------------------------------------------------------------------------
 //  Semilla inicial: perfil "Personal" + categorías por defecto
 // ---------------------------------------------------------------------------
-async function ensureSeedData() {
-  // Lee una sola vez de forma rápida vía listener temporal no sirve aquí;
-  // usamos una lectura directa con un snapshot puntual mediante onSnapshot once.
-  const profilesSnap = await getOnce(col('profiles'));
-  if (!profilesSnap.empty) return;
+function defaultCategoriesFor(type) {
+  return DEFAULT_CATEGORIES.filter((c) => c.profileType === type);
+}
 
+/** Crea un perfil nuevo (de nivel superior, con el creador como miembro) y
+ *  siembra sus categorías por defecto. Devuelve el id del perfil. */
+async function createProfile({ name, type, mode }) {
   const batch = writeBatch(db);
-  const personalRef = doc(col('profiles'));
-  batch.set(personalRef, { name: 'Personal', type: 'personal', createdAt: serverTimestamp() });
-  for (const c of DEFAULT_CATEGORIES) {
-    batch.set(doc(col('categories')), { ...c, createdAt: serverTimestamp() });
+  const ref = doc(profilesCol());
+  const data = {
+    name,
+    type,
+    ownerUid: state.uid,
+    members: [state.uid],
+    memberEmails: [state.email],
+    createdAt: serverTimestamp(),
+  };
+  if (type === 'business') data.mode = mode || 'sales';
+  batch.set(ref, data);
+  for (const c of defaultCategoriesFor(type)) {
+    batch.set(doc(collection(db, 'profiles', ref.id, 'categories')), { ...c, createdAt: serverTimestamp() });
   }
   await batch.commit();
+  return ref.id;
+}
+
+async function ensureSeedData() {
+  // ¿El usuario ya pertenece a algún perfil? Si no, le creamos uno "Personal".
+  const mine = await getOnce(query(profilesCol(), where('members', 'array-contains', state.uid)));
+  if (!mine.empty) return;
+  await createProfile({ name: 'Personal', type: 'personal' });
 }
 
 // Lectura puntual usando un listener que se cancela al primer resultado.
@@ -236,56 +274,68 @@ function getOnce(ref) {
 //  Listeners en tiempo real
 // ---------------------------------------------------------------------------
 function subscribeAll() {
+  // Perfiles a los que pertenezco (propios + compartidos).
   state.unsub.push(
-    onSnapshot(col('profiles'), (snap) => {
+    onSnapshot(query(profilesCol(), where('members', 'array-contains', state.uid)), (snap) => {
       state.profiles = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      if (!state.currentProfileId || !state.profiles.find((p) => p.id === state.currentProfileId)) {
+      let pid = state.currentProfileId;
+      if (!pid || !state.profiles.find((p) => p.id === pid)) {
         const saved = localStorage.getItem('finanzapp.profile');
-        state.currentProfileId =
-          (saved && state.profiles.find((p) => p.id === saved)?.id) || state.profiles[0]?.id || null;
+        pid = (saved && state.profiles.find((p) => p.id === saved)?.id) || state.profiles[0]?.id || null;
       }
-      renderProfiles();
-      updateBusinessTabs();
-      render();
+      setCurrentProfile(pid);
     }),
   );
 
+  // Invitaciones pendientes dirigidas a mi correo (en cualquier perfil).
   state.unsub.push(
-    onSnapshot(col('products'), (snap) => {
-      state.products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      render();
+    onSnapshot(query(collectionGroup(db, 'invites'), where('email', '==', state.email)), (snap) => {
+      state.invites = snap.docs.map((d) => ({ id: d.id, profileId: d.ref.parent.parent.id, ...d.data() }));
+      renderInvites();
     }),
   );
+}
 
-  state.unsub.push(
-    onSnapshot(col('orders'), (snap) => {
-      state.orders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      render();
-    }),
-  );
+/** Cambia de perfil: re-suscribe los listeners de datos de ese perfil. */
+function setCurrentProfile(pid) {
+  state.currentProfileId = pid;
+  if (pid) localStorage.setItem('finanzapp.profile', pid);
+  renderProfiles();
+  updateBusinessTabs();
+  if (pid !== state.profileSubFor) {
+    state.dataUnsub.forEach((fn) => fn());
+    state.dataUnsub = [];
+    state.profileSubFor = pid;
+    state.transactions = [];
+    state.products = [];
+    state.orders = [];
+    state.contracts = [];
+    state.categories = [];
+    if (pid) subscribeProfileData(pid);
+  }
+  render();
+}
 
-  state.unsub.push(
-    onSnapshot(col('contracts'), (snap) => {
-      state.contracts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      render();
-    }),
-  );
-
-  state.unsub.push(
-    onSnapshot(col('categories'), (snap) => {
-      state.categories = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      render();
-    }),
-  );
-
-  state.unsub.push(
-    onSnapshot(col('transactions'), (snap) => {
-      state.transactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      // Indicador de sincronización: hay cambios locales sin confirmar aún.
-      setSyncBadge(snap.metadata.hasPendingWrites ? 'syncing' : 'ok');
-      render();
-    }),
-  );
+function subscribeProfileData(pid) {
+  const sub = (name, apply) =>
+    state.dataUnsub.push(
+      onSnapshot(collection(db, 'profiles', pid, name), (snap) => {
+        if (state.profileSubFor !== pid) return; // snapshot de un perfil ya abandonado
+        apply(
+          snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+          snap,
+        );
+        render();
+      }),
+    );
+  sub('categories', (rows) => (state.categories = rows));
+  sub('products', (rows) => (state.products = rows));
+  sub('orders', (rows) => (state.orders = rows));
+  sub('contracts', (rows) => (state.contracts = rows));
+  sub('transactions', (rows, snap) => {
+    state.transactions = rows;
+    setSyncBadge(snap.metadata.hasPendingWrites ? 'syncing' : 'ok');
+  });
 }
 
 function setSyncBadge(status) {
@@ -391,12 +441,15 @@ function productAvailable(p) {
 //  Render
 // ---------------------------------------------------------------------------
 function render() {
+  renderCalendar();
   renderDashboard();
   renderTransactions();
   renderCategoriesList();
   renderInventory();
   renderOrders();
   renderRentals();
+  renderInvites();
+  renderShareSection();
 }
 
 /** Muestra/oculta las pestañas de negocio según el tipo y modo del perfil. */
@@ -473,6 +526,101 @@ function renderProfiles() {
     }
     list.appendChild(row);
   }
+}
+
+// --- Calendario de eventos (entregas, recogidas, devoluciones) ---
+let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function profileEvents() {
+  const evs = [];
+  for (const o of profileOrders()) {
+    if (o.dueDate && o.status !== 'delivered' && o.status !== 'cancelled')
+      evs.push({
+        date: o.dueDate, color: '#1b61d1', icon: 'local_shipping',
+        label: `Entregar · ${o.customerName || 'Cliente'}`, onClick: () => openOrderDetails(o),
+      });
+  }
+  for (const c of profileContracts()) {
+    if (c.status === 'cancelled') continue;
+    if (c.pickupDate && c.status === 'reserved')
+      evs.push({
+        date: c.pickupDate, color: '#8B5CF6', icon: 'outbox',
+        label: `Recoger · ${c.customerName || 'Cliente'}`, onClick: () => openContractDetails(c),
+      });
+    if (c.dueDate && c.status !== 'returned')
+      evs.push({
+        date: c.dueDate, color: '#D97706', icon: 'assignment_return',
+        label: `Devolver · ${c.customerName || 'Cliente'}`, onClick: () => openContractDetails(c),
+      });
+  }
+  return evs;
+}
+
+function renderCalendar() {
+  const wrap = $('#calendar');
+  const agenda = $('#agenda');
+  if (!wrap || !agenda) return;
+  const events = profileEvents();
+  const byDate = {};
+  for (const e of events) (byDate[e.date] = byDate[e.date] || []).push(e);
+
+  const y = calMonth.getFullYear();
+  const m = calMonth.getMonth();
+  const firstDow = (new Date(y, m, 1).getDay() + 6) % 7; // lunes = 0
+  const daysIn = new Date(y, m + 1, 0).getDate();
+  const today = todayIso();
+
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) cells += '<div class="cal-cell empty"></div>';
+  for (let d = 1; d <= daysIn; d++) {
+    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const evs = byDate[ds] || [];
+    const dots = [...new Set(evs.map((e) => e.color))]
+      .slice(0, 3)
+      .map((c) => `<span class="cal-dot" style="background:${c}"></span>`)
+      .join('');
+    cells += `<div class="cal-cell${ds === today ? ' today' : ''}" data-date="${ds}">
+      <span class="cal-num">${d}</span><span class="cal-dots">${dots}</span></div>`;
+  }
+  const dows = ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'];
+  wrap.innerHTML = `
+    <div class="cal-head">
+      <button class="icon-btn" id="cal-prev"><span class="material-symbols-rounded">chevron_left</span></button>
+      <strong class="cal-title">${calMonth.toLocaleDateString('es', { month: 'long', year: 'numeric' })}</strong>
+      <button class="icon-btn" id="cal-next"><span class="material-symbols-rounded">chevron_right</span></button>
+    </div>
+    <div class="cal-grid cal-dow">${dows.map((d) => `<div class="cal-dowc">${d}</div>`).join('')}</div>
+    <div class="cal-grid">${cells}</div>`;
+  wrap.querySelector('#cal-prev').onclick = () => {
+    calMonth = new Date(y, m - 1, 1);
+    renderCalendar();
+  };
+  wrap.querySelector('#cal-next').onclick = () => {
+    calMonth = new Date(y, m + 1, 1);
+    renderCalendar();
+  };
+
+  // Agenda: eventos pendientes ordenados por fecha (los atrasados primero).
+  const list = events.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(0, 8);
+  if (list.length === 0) {
+    agenda.innerHTML = '';
+    return;
+  }
+  agenda.innerHTML = '<h2 class="section-title">Próximos eventos</h2>';
+  const ul = document.createElement('div');
+  ul.className = 'tx-list';
+  for (const e of list) {
+    const overdue = e.date < today;
+    const row = document.createElement('div');
+    row.className = 'tx-item';
+    row.innerHTML = `
+      <span class="tx-icon" style="background:${e.color}"><span class="material-symbols-rounded">${e.icon}</span></span>
+      <div class="tx-main"><div class="tx-cat">${esc(e.label)}</div>
+        <div class="tx-meta ${overdue ? 'low-stock' : ''}">${esc(e.date)}${overdue ? ' · atrasado' : ''}</div></div>`;
+    row.onclick = e.onClick;
+    ul.appendChild(row);
+  }
+  agenda.appendChild(ul);
 }
 
 function renderDashboard() {
@@ -579,7 +727,7 @@ function renderCategoriesList() {
     const del = document.createElement('button');
     del.className = 'icon-btn';
     del.innerHTML = '<span class="material-symbols-rounded">delete</span>';
-    del.onclick = () => deleteDoc(doc(col('categories'), c.id));
+    del.onclick = () => deleteDoc(pdoc('categories', c.id));
     row.appendChild(del);
     list.appendChild(row);
   }
@@ -634,12 +782,7 @@ document.querySelectorAll('.nav-item').forEach((tab) => {
   tab.addEventListener('click', () => switchView(tab.dataset.view));
 });
 
-$('#profile-select').addEventListener('change', (e) => {
-  state.currentProfileId = e.target.value;
-  localStorage.setItem('finanzapp.profile', state.currentProfileId);
-  updateBusinessTabs();
-  render();
-});
+$('#profile-select').addEventListener('change', (e) => setCurrentProfile(e.target.value));
 
 // ---------------------------------------------------------------------------
 //  Modal genérico
@@ -725,11 +868,11 @@ function openTxForm(existing) {
       return;
     }
     if (existing) {
-      await updateDoc(doc(col('transactions'), existing.id), {
+      await updateDoc(pdoc('transactions', existing.id), {
         type: txType, amount, categoryId, date, note, updatedAt: serverTimestamp(),
       });
     } else {
-      await addDoc(col('transactions'), {
+      await addDoc(pcol('transactions'), {
         profileId: state.currentProfileId, type: txType, amount, categoryId, date, note,
         createdAt: serverTimestamp(),
       });
@@ -757,7 +900,7 @@ function openTxActions(t) {
     openTxForm(t);
   });
   node.querySelector('#tx-del').addEventListener('click', async () => {
-    await deleteDoc(doc(col('transactions'), t.id));
+    await deleteDoc(pdoc('transactions', t.id));
     closeModal();
   });
   openModal('Movimiento', node);
@@ -801,11 +944,11 @@ function openProductForm(existing) {
       return;
     }
     if (existing) {
-      await updateDoc(doc(col('products'), existing.id), {
+      await updateDoc(pdoc('products', existing.id), {
         name, kind, stock, price, minStock, updatedAt: serverTimestamp(),
       });
     } else {
-      await addDoc(col('products'), {
+      await addDoc(pcol('products'), {
         profileId: state.currentProfileId, name, kind, stock, price, minStock,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
@@ -834,7 +977,7 @@ function openProductActions(p) {
     const qty = parseFloat(node.querySelector('#rs-qty').value) || 0;
     const cost = parseFloat(node.querySelector('#rs-cost').value) || 0;
     if (qty <= 0) return;
-    await updateDoc(doc(col('products'), p.id), {
+    await updateDoc(pdoc('products', p.id), {
       stock: (p.stock || 0) + qty, updatedAt: serverTimestamp(),
     });
     if (cost > 0) {
@@ -842,7 +985,7 @@ function openProductActions(p) {
         state.categories.find((c) => c.profileType === 'business' && c.name === 'Mercancía') ||
         state.categories.find((c) => c.profileType === 'business' && c.type === 'expense');
       if (cat) {
-        await addDoc(col('transactions'), {
+        await addDoc(pcol('transactions'), {
           profileId: state.currentProfileId, type: 'expense', amount: cost, categoryId: cat.id,
           date: todayIso(), note: `Reabastecer ${p.name} (+${qty})`, createdAt: serverTimestamp(),
         });
@@ -856,7 +999,7 @@ function openProductActions(p) {
   });
   node.querySelector('#pr-del').addEventListener('click', async () => {
     if (!confirm(`¿Eliminar el producto "${p.name}"?`)) return;
-    await deleteDoc(doc(col('products'), p.id));
+    await deleteDoc(pdoc('products', p.id));
     closeModal();
   });
   openModal('Producto', node);
@@ -930,7 +1073,7 @@ function openProductionForm() {
     const batch = writeBatch(db);
     for (const [pid, d] of Object.entries(delta)) {
       const pr = state.products.find((x) => x.id === pid);
-      batch.update(doc(col('products'), pid), { stock: (pr.stock || 0) + d, updatedAt: serverTimestamp() });
+      batch.update(pdoc('products', pid), { stock: (pr.stock || 0) + d, updatedAt: serverTimestamp() });
     }
     await batch.commit();
     closeModal();
@@ -981,6 +1124,7 @@ function openOrderForm() {
     <div id="ord-items"></div>
     <button type="button" class="btn btn-text" id="ord-add-item"><span class="material-symbols-rounded">add</span>Agregar artículo</button>
     <label class="stacked">Envío (opcional)<input type="number" id="ord-shipping" inputmode="numeric" min="0" step="any" placeholder="0" /></label>
+    <label class="stacked">Fecha de entrega (opcional)<input type="date" id="ord-due" /></label>
     <label class="stacked">Nota (opcional)<input type="text" id="ord-note" maxlength="120" /></label>
     <div class="ord-total"><span>Total</span><span id="ord-total-val">$0</span></div>
     <p id="ord-error" class="error hidden"></p>
@@ -1025,6 +1169,7 @@ function openOrderForm() {
     const err = node.querySelector('#ord-error');
     const customer = node.querySelector('#ord-customer').value.trim() || 'Cliente';
     const shipping = parseFloat(node.querySelector('#ord-shipping').value) || 0;
+    const dueDate = node.querySelector('#ord-due').value || null;
     const note = node.querySelector('#ord-note').value.trim();
 
     const items = [];
@@ -1055,7 +1200,7 @@ function openOrderForm() {
       state.categories.find((c) => c.profileType === 'business' && c.name === 'Ventas') ||
       state.categories.find((c) => c.profileType === 'business' && c.type === 'income');
     if (!ventasCat) {
-      const ref = await addDoc(col('categories'), {
+      const ref = await addDoc(pcol('categories'), {
         name: 'Ventas', type: 'income', profileType: 'business', color: '#059669', createdAt: serverTimestamp(),
       });
       ventasCat = { id: ref.id };
@@ -1063,20 +1208,20 @@ function openOrderForm() {
 
     // Escritura atómica: ingreso + pedido + descuento de stock.
     const batch = writeBatch(db);
-    const txRef = doc(col('transactions'));
-    const orderRef = doc(col('orders'));
+    const txRef = doc(pcol('transactions'));
+    const orderRef = doc(pcol('orders'));
     batch.set(txRef, {
       profileId: state.currentProfileId, type: 'income', amount: total, categoryId: ventasCat.id,
       date: todayIso(), note: `Pedido - ${customer}`, createdAt: serverTimestamp(),
     });
     batch.set(orderRef, {
       profileId: state.currentProfileId, customerName: customer, items, shipping, total,
-      status: 'pending', incomeTxId: txRef.id, note, date: todayIso(),
+      status: 'pending', incomeTxId: txRef.id, note, date: todayIso(), dueDate,
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
     for (const [pid, qty] of Object.entries(needed)) {
       const pr = state.products.find((x) => x.id === pid);
-      batch.update(doc(col('products'), pid), { stock: (pr.stock || 0) - qty, updatedAt: serverTimestamp() });
+      batch.update(pdoc('products', pid), { stock: (pr.stock || 0) - qty, updatedAt: serverTimestamp() });
     }
     await batch.commit();
     closeModal();
@@ -1101,7 +1246,7 @@ function openOrderDetails(o) {
   node.innerHTML = `
     <div class="settings-row">
       <div><span class="name">${esc(o.customerName || 'Cliente')}</span>
-      <div class="sub">${esc(o.date || '')}</div></div>
+      <div class="sub">${esc(o.date || '')}${o.dueDate ? ` · Entregar ${esc(o.dueDate)}` : ''}</div></div>
       <span class="status-chip status-${o.status}">${st.label}</span>
     </div>
     ${itemsHtml}
@@ -1120,7 +1265,7 @@ function openOrderDetails(o) {
   );
   node.querySelectorAll('.ord-next').forEach((b) =>
     b.addEventListener('click', async () => {
-      await updateDoc(doc(col('orders'), o.id), { status: b.dataset.s, updatedAt: serverTimestamp() });
+      await updateDoc(pdoc('orders', o.id), { status: b.dataset.s, updatedAt: serverTimestamp() });
       closeModal();
     }),
   );
@@ -1133,10 +1278,10 @@ function openOrderDetails(o) {
       for (const it of o.items || []) restore[it.productId] = (restore[it.productId] || 0) + it.qty;
       for (const [pid, qty] of Object.entries(restore)) {
         const pr = state.products.find((x) => x.id === pid);
-        if (pr) batch.update(doc(col('products'), pid), { stock: (pr.stock || 0) + qty, updatedAt: serverTimestamp() });
+        if (pr) batch.update(pdoc('products', pid), { stock: (pr.stock || 0) + qty, updatedAt: serverTimestamp() });
       }
-      if (o.incomeTxId) batch.delete(doc(col('transactions'), o.incomeTxId));
-      batch.update(doc(col('orders'), o.id), { status: 'cancelled', updatedAt: serverTimestamp() });
+      if (o.incomeTxId) batch.delete(pdoc('transactions', o.incomeTxId));
+      batch.update(pdoc('orders', o.id), { status: 'cancelled', updatedAt: serverTimestamp() });
       await batch.commit();
       closeModal();
     });
@@ -1187,6 +1332,7 @@ function openContractForm() {
     <div id="ct-items"></div>
     <button type="button" class="btn btn-text" id="ct-add-item"><span class="material-symbols-rounded">add</span>Agregar artículo</button>
     <label class="stacked">Recargo / Descuento (opcional)<input type="number" id="ct-adjust" inputmode="numeric" step="any" placeholder="0" /></label>
+    <label class="stacked">Fecha de recogida (opcional)<input type="date" id="ct-pickup-date" /></label>
     <label class="stacked">Fecha de devolución (opcional)<input type="date" id="ct-due" /></label>
     <label class="stacked">Nota (opcional)<input type="text" id="ct-note" maxlength="120" /></label>
     <div class="ord-total"><span>Total</span><span id="ct-total-val">$0</span></div>
@@ -1232,6 +1378,7 @@ function openContractForm() {
     const err = node.querySelector('#ct-error');
     const customer = node.querySelector('#ct-customer').value.trim() || 'Cliente';
     const adjust = parseFloat(node.querySelector('#ct-adjust').value) || 0;
+    const pickupDate = node.querySelector('#ct-pickup-date').value || null;
     const dueDate = node.querySelector('#ct-due').value || null;
     const note = node.querySelector('#ct-note').value.trim();
 
@@ -1260,9 +1407,9 @@ function openContractForm() {
     const total = items.reduce((s, it) => s + it.qty * it.price, 0) + adjust;
     // El alquiler NO descuenta stock (las unidades vuelven); se reserva disponibilidad.
     // Ingreso pendiente hasta registrar el pago.
-    await addDoc(col('contracts'), {
+    await addDoc(pcol('contracts'), {
       profileId: state.currentProfileId, customerName: customer, items, adjust, total,
-      status: 'reserved', paymentStatus: 'pending', note, date: todayIso(), dueDate,
+      status: 'reserved', paymentStatus: 'pending', note, date: todayIso(), pickupDate, dueDate,
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
     closeModal();
@@ -1293,7 +1440,7 @@ function openContractDetails(c) {
   const canCancel = c.status === 'reserved' || c.status === 'picked_up';
   node.innerHTML = `
     <div class="settings-row">
-      <div><span class="name">${esc(c.customerName || 'Cliente')}</span><div class="sub">${esc(c.date || '')}${c.dueDate ? ` · Devolver antes de ${esc(c.dueDate)}` : ''}${isContractOverdue(c) ? ' <span class="low-stock">(atrasado)</span>' : ''}</div></div>
+      <div><span class="name">${esc(c.customerName || 'Cliente')}</span><div class="sub">${esc(c.date || '')}${c.pickupDate ? ` · Recoger ${esc(c.pickupDate)}` : ''}${c.dueDate ? ` · Devolver ${esc(c.dueDate)}` : ''}${isContractOverdue(c) ? ' <span class="low-stock">(atrasado)</span>' : ''}</div></div>
       <div style="text-align:right"><span class="status-chip status-${c.status}">${st.label}</span>
       ${c.status !== 'cancelled' ? `<br><span class="status-chip ${paid ? 'pay-paid' : 'pay-pending'}" style="margin-top:4px;display:inline-block">${paid ? 'Pagado' : 'Por cobrar'}</span>` : ''}</div>
     </div>
@@ -1314,13 +1461,13 @@ function openContractDetails(c) {
   const pickup = node.querySelector('#ct-pickup');
   if (pickup)
     pickup.addEventListener('click', async () => {
-      await updateDoc(doc(col('contracts'), c.id), { status: 'picked_up', updatedAt: serverTimestamp() });
+      await updateDoc(pdoc('contracts', c.id), { status: 'picked_up', updatedAt: serverTimestamp() });
       closeModal();
     });
   const ret = node.querySelector('#ct-return');
   if (ret)
     ret.addEventListener('click', async () => {
-      await updateDoc(doc(col('contracts'), c.id), {
+      await updateDoc(pdoc('contracts', c.id), {
         status: 'returned', returnedAt: todayIso(), updatedAt: serverTimestamp(),
       });
       closeModal();
@@ -1332,18 +1479,18 @@ function openContractDetails(c) {
         state.categories.find((x) => x.profileType === 'business' && x.name === 'Servicios') ||
         state.categories.find((x) => x.profileType === 'business' && x.type === 'income');
       if (!cat) {
-        const ref = await addDoc(col('categories'), {
+        const ref = await addDoc(pcol('categories'), {
           name: 'Servicios', type: 'income', profileType: 'business', color: '#10B981', createdAt: serverTimestamp(),
         });
         cat = { id: ref.id };
       }
       const batch = writeBatch(db);
-      const txRef = doc(col('transactions'));
+      const txRef = doc(pcol('transactions'));
       batch.set(txRef, {
         profileId: state.currentProfileId, type: 'income', amount: c.total, categoryId: cat.id,
         date: todayIso(), note: `Alquiler - ${c.customerName}`, createdAt: serverTimestamp(),
       });
-      batch.update(doc(col('contracts'), c.id), {
+      batch.update(pdoc('contracts', c.id), {
         paymentStatus: 'paid', incomeTxId: txRef.id, updatedAt: serverTimestamp(),
       });
       await batch.commit();
@@ -1354,8 +1501,8 @@ function openContractDetails(c) {
     cancelBtn.addEventListener('click', async () => {
       if (!confirm('¿Cancelar el contrato? Se liberan las unidades' + (paid ? ' y se revierte el pago.' : '.'))) return;
       const batch = writeBatch(db);
-      if (paid && c.incomeTxId) batch.delete(doc(col('transactions'), c.incomeTxId));
-      batch.update(doc(col('contracts'), c.id), { status: 'cancelled', updatedAt: serverTimestamp() });
+      if (paid && c.incomeTxId) batch.delete(pdoc('transactions', c.incomeTxId));
+      batch.update(pdoc('contracts', c.id), { status: 'cancelled', updatedAt: serverTimestamp() });
       await batch.commit();
       closeModal();
     });
@@ -1412,27 +1559,136 @@ $('#add-profile-btn').addEventListener('click', () => {
       err.classList.remove('hidden');
       return;
     }
-    const data = { name, type, createdAt: serverTimestamp() };
-    if (type === 'business') data.mode = mode;
-    await addDoc(col('profiles'), data);
+    const pid = await createProfile({ name, type, mode });
     closeModal();
+    setCurrentProfile(pid);
   });
   openModal('Nuevo perfil', node);
 });
 
 async function deleteProfile(p) {
-  const hasTx = state.transactions.some((t) => t.profileId === p.id);
-  const msg = hasTx
-    ? `El perfil "${p.name}" tiene movimientos. ¿Eliminar el perfil y TODOS sus movimientos?`
-    : `¿Eliminar el perfil "${p.name}"?`;
+  const amOwner = !p.ownerUid || p.ownerUid === state.uid;
+  const shared = (p.members?.length || 1) > 1;
+
+  // Si no soy el dueño, "salgo" del negocio (no borro los datos de los demás).
+  if (!amOwner) {
+    if (!confirm(`¿Salir de "${p.name}"? Dejarás de verlo, pero sigue existiendo para los demás.`)) return;
+    await updateDoc(doc(profilesCol(), p.id), {
+      members: arrayRemove(state.uid),
+      memberEmails: arrayRemove(state.email),
+    });
+    if (state.currentProfileId === p.id) state.currentProfileId = null;
+    return;
+  }
+
+  const msg = shared
+    ? `"${p.name}" está compartido. Si lo eliminas, se borra para TODOS los miembros. ¿Continuar?`
+    : `¿Eliminar "${p.name}" y todos sus datos?`;
   if (!confirm(msg)) return;
+
   const batch = writeBatch(db);
-  state.transactions
-    .filter((t) => t.profileId === p.id)
-    .forEach((t) => batch.delete(doc(col('transactions'), t.id)));
-  batch.delete(doc(col('profiles'), p.id));
+  // Solo podemos limpiar las subcolecciones si es el perfil cargado ahora.
+  if (p.id === state.currentProfileId) {
+    for (const t of state.transactions) batch.delete(pdoc('transactions', t.id));
+    for (const x of state.products) batch.delete(pdoc('products', x.id));
+    for (const x of state.orders) batch.delete(pdoc('orders', x.id));
+    for (const x of state.contracts) batch.delete(pdoc('contracts', x.id));
+    for (const x of state.categories) batch.delete(pdoc('categories', x.id));
+  }
+  batch.delete(doc(profilesCol(), p.id));
   await batch.commit();
   if (state.currentProfileId === p.id) state.currentProfileId = null;
+}
+
+// --- Compartir negocio: invitaciones y miembros ---
+function renderInvites() {
+  const wrap = $('#invites-section');
+  if (!wrap) return;
+  // No mostrar invitaciones de perfiles a los que ya pertenezco.
+  const pending = state.invites.filter((i) => !state.profiles.find((p) => p.id === i.profileId));
+  if (pending.length === 0) {
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.innerHTML =
+    `<h2 class="section-title">Invitaciones</h2>` +
+    pending
+      .map(
+        (i) => `<div class="settings-row">
+          <div><span class="name">${esc(i.profileName || 'Negocio')}</span>
+          <div class="sub">Te invitó ${esc(i.invitedBy || '')}</div></div>
+          <button class="btn btn-filled accept-invite" data-pid="${i.profileId}" style="min-height:36px;padding:0 16px">Unirme</button>
+        </div>`,
+      )
+      .join('');
+  wrap.querySelectorAll('.accept-invite').forEach((b) =>
+    b.addEventListener('click', () => acceptInvite(b.dataset.pid)),
+  );
+}
+
+async function acceptInvite(pid) {
+  await updateDoc(doc(profilesCol(), pid), {
+    members: arrayUnion(state.uid),
+    memberEmails: arrayUnion(state.email),
+  });
+  await deleteDoc(doc(db, 'profiles', pid, 'invites', state.email));
+  setCurrentProfile(pid);
+}
+
+function renderShareSection() {
+  const wrap = $('#share-section');
+  if (!wrap) return;
+  const p = currentProfile();
+  if (!p || p.type !== 'business') {
+    wrap.innerHTML = '';
+    return;
+  }
+  const emails = p.memberEmails || [];
+  wrap.innerHTML = `
+    <h2 class="section-title">Compartir "${esc(p.name)}"</h2>
+    <div class="settings-list">
+      ${emails
+        .map(
+          (e) =>
+            `<div class="settings-row"><span class="name">${esc(e)}</span>${e === state.email ? '<span class="chip">tú</span>' : ''}</div>`,
+        )
+        .join('')}
+    </div>
+    <button class="btn btn-tonal btn-block" id="invite-btn"><span class="material-symbols-rounded">person_add</span>Invitar por correo</button>`;
+  wrap.querySelector('#invite-btn').addEventListener('click', openInviteForm);
+}
+
+function openInviteForm() {
+  const p = currentProfile();
+  if (!p) return;
+  const node = document.createElement('div');
+  node.innerHTML = `
+    <p class="muted">Escribe el correo de la persona. Debe entrar (o registrarse) con ese mismo correo y aceptar la invitación en sus Ajustes.</p>
+    <label class="stacked">Correo<input type="email" id="inv-email" placeholder="persona@correo.com" /></label>
+    <p id="inv-error" class="error hidden"></p>
+    <button class="btn btn-filled btn-block" id="inv-send">Enviar invitación</button>`;
+  node.querySelector('#inv-send').addEventListener('click', async () => {
+    const email = node.querySelector('#inv-email').value.trim().toLowerCase();
+    const err = node.querySelector('#inv-error');
+    err.classList.remove('ok');
+    if (!email || !email.includes('@')) {
+      err.textContent = 'Escribe un correo válido.';
+      err.classList.remove('hidden');
+      return;
+    }
+    if ((p.memberEmails || []).includes(email)) {
+      err.textContent = 'Esa persona ya es miembro.';
+      err.classList.remove('hidden');
+      return;
+    }
+    await setDoc(doc(db, 'profiles', p.id, 'invites', email), {
+      email, profileName: p.name, invitedBy: state.email, createdAt: serverTimestamp(),
+    });
+    err.textContent = 'Invitación enviada. La persona la verá al entrar con ese correo.';
+    err.classList.add('ok');
+    err.classList.remove('hidden');
+  });
+  openModal('Invitar a ' + p.name, node);
 }
 
 $('#add-category-btn').addEventListener('click', () => {
@@ -1466,7 +1722,7 @@ $('#add-category-btn').addEventListener('click', () => {
       err.classList.remove('hidden');
       return;
     }
-    await addDoc(col('categories'), { name, type, profileType: p.type, color, createdAt: serverTimestamp() });
+    await addDoc(pcol('categories'), { name, type, profileType: p.type, color, createdAt: serverTimestamp() });
     closeModal();
   });
   openModal('Nueva categoría', node);

@@ -57,6 +57,11 @@ Luego abre <http://localhost:8080>.
   el stock de cada uno (p. ej. 1 pliego → 3 cajas).
 - **Editar movimientos**, recuperar contraseña por correo, y fecha de devolución con
   aviso de "atrasado" en los alquileres.
+- **Negocios compartidos**: invita a otra persona por correo para co-gestionar un
+  negocio; ambos ven y editan en tiempo real. Cada quien mantiene sus perfiles
+  personales privados. (Modelo de datos: perfiles de nivel superior con `members`.)
+- **Calendario de eventos** en el inicio: entregas de pedidos, recogidas y devoluciones
+  de alquiler, con agenda de próximos eventos y aviso de atrasados.
 - **Instalable (PWA)**: se puede "Agregar a la pantalla de inicio" con ícono propio,
   abre a pantalla completa y funciona offline.
 - Diseño **Material Design 3** (Roboto, Material Symbols, ripple, bottom sheets).

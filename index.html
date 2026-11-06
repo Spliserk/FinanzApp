@@ -63,6 +63,10 @@
 
       <!-- Vista: Tablero -->
       <section id="view-dashboard" class="view">
+        <!-- Calendario de eventos (entregas, recogidas, devoluciones) -->
+        <div id="calendar" class="calendar"></div>
+        <div id="agenda" class="agenda"></div>
+
         <div class="balance-card">
           <span class="balance-label">Saldo del perfil</span>
           <span id="balance-amount" class="balance-amount">$0</span>
@@ -131,11 +135,17 @@
 
       <!-- Vista: Ajustes -->
       <section id="view-settings" class="view hidden">
+        <!-- Invitaciones recibidas (se llena dinámicamente) -->
+        <div id="invites-section"></div>
+
         <h2 class="section-title">Perfiles</h2>
         <div id="profiles-list" class="settings-list"></div>
         <button id="add-profile-btn" class="btn btn-tonal btn-block">
           <span class="material-symbols-rounded">add</span>Nuevo perfil
         </button>
+
+        <!-- Compartir el negocio actual (se llena dinámicamente si es negocio) -->
+        <div id="share-section"></div>
 
         <h2 class="section-title">Categorías del perfil</h2>
         <div id="categories-list" class="settings-list"></div>

@@ -1,6 +1,6 @@
 // Service worker de FinanzApp: cachea el "shell" de la app para que abra offline.
 // (La sincronización de datos la maneja Firestore con su propia caché.)
-const CACHE = 'finanzapp-v1';
+const CACHE = 'finanzapp-v2';
 const ASSETS = [
   './',
   './index.html',

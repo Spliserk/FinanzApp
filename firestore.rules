@@ -1,12 +1,44 @@
 rules_version = '2';
 
-// Reglas de seguridad de Firestore para FinanzApp.
-// Cada usuario solo puede leer/escribir SUS propios datos (bajo users/{su-uid}).
+// Reglas de FinanzApp (modelo compartido).
+// Los perfiles son de nivel superior y tienen una lista "members" (uids).
+// Un usuario solo ve/gestiona los perfiles donde es miembro, y sus datos.
 // Pega estas reglas en: Firebase Console → Firestore Database → pestaña "Reglas".
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isMember(pid) {
+      return signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/profiles/$(pid)).data.members;
+    }
+
+    match /profiles/{pid} {
+      allow read:   if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn() && request.auth.uid in request.resource.data.members;
+      // Miembros: control total. No-miembro: solo para unirse si tiene invitación.
+      allow update: if signedIn() && (
+        request.auth.uid in resource.data.members
+        || exists(/databases/$(database)/documents/profiles/$(pid)/invites/$(request.auth.token.email))
+      );
+      allow delete: if signedIn() && request.auth.uid in resource.data.members;
+
+      // Datos del perfil (transactions, products, orders, contracts, categories).
+      match /{sub}/{docId} {
+        allow read, write: if isMember(pid);
+      }
+
+      // Invitaciones: el invitado (por su correo) puede leerla y borrarla al unirse.
+      match /invites/{email} {
+        allow read, delete: if signedIn() && (isMember(pid) || request.auth.token.email == email);
+        allow create, update: if isMember(pid);
+      }
+    }
+
+    // Collection group: el invitado busca sus invitaciones por correo.
+    match /{path=**}/invites/{email} {
+      allow read: if signedIn() && request.auth.token.email == email;
     }
   }
 }
